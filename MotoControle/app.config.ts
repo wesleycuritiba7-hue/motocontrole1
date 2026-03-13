@@ -6,7 +6,7 @@ const schemeFromBundleId = `manus${timestamp}`;
 
 const env = {
   appName: "MotoControle",
-  appSlug: "motocontrole-app",
+  appSlug: "motocontrole",
   logoUrl:
     "https://files.manuscdn.com/user_upload_by_module/session_file/310519663180751718/rjUaAkkFnOORzLFA.png",
   scheme: schemeFromBundleId,
