@@ -82,8 +82,6 @@ const config: ExpoConfig = {
       },
     ],
   ],
-  extra: {
-   
   experiments: {
     typedRoutes: true,
   },
