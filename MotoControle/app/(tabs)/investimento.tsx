@@ -27,7 +27,6 @@ export default function InvestimentoScreen() {
 
   return (
     <ScreenContainer>
-      {/* AJUSTE 4 v6: Sub-abas padronizadas - mesmo estilo pill/chip em todas as abas */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}>
         {SUB_TABS.map((tab) => (
@@ -52,9 +51,9 @@ export default function InvestimentoScreen() {
   );
 }
 
-// ==================== CARTEIRAS (AJUSTE 6) ====================
+// ==================== CARTEIRAS ====================
 function CarteirasTab() {
-  const { config, saveConfig, walletTransactions, addWalletTransaction } = useData();
+  const { config, saveConfig, walletTransactions, addWalletTransaction, removeWalletTransaction } = useData();
   const colors = useColors();
   const [newWalletName, setNewWalletName] = useState("");
   const [depositWallet, setDepositWallet] = useState<string | null>(null);
@@ -63,7 +62,6 @@ function CarteirasTab() {
 
   const wallets = config.wallets || [];
 
-  // Calcular saldo de cada carteira baseado nas transações
   const getWalletBalance = (walletId: string) => {
     return walletTransactions
       .filter((t) => t.walletId === walletId)
@@ -100,9 +98,22 @@ function CarteirasTab() {
     setDepositDesc("");
   };
 
+  const handleDeleteTransaction = async (txId: string, txDesc: string) => {
+    const doDelete = async () => {
+      await removeWalletTransaction(txId);
+    };
+    if (Platform.OS === "web") {
+      if (confirm(`Excluir transação "${txDesc}"?`)) await doDelete();
+    } else {
+      Alert.alert("Confirmar", `Excluir transação "${txDesc}"?`, [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Excluir", style: "destructive", onPress: doDelete },
+      ]);
+    }
+  };
+
   const totalBalance = wallets.reduce((s, w) => s + getWalletBalance(w.id), 0);
 
-  // AJUSTE 6: Gráfico de linha mês a mês - crescimento individual de cada carteira
   const [yearRef, setYearRef] = useState(new Date());
   const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
   const LINE_COLORS = [
@@ -117,11 +128,9 @@ function CarteirasTab() {
         .filter((t) => t.walletId === wallet.id)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      // Calcular saldo acumulado mês a mês
       const monthlyBalances = new Array(12).fill(0);
       let runningBalance = 0;
 
-      // Primeiro, calcular saldo antes do ano de referência
       walletTx.forEach((t) => {
         const d = new Date(t.date + "T12:00:00");
         if (d.getFullYear() < year) {
@@ -130,7 +139,6 @@ function CarteirasTab() {
         }
       });
 
-      // Agora calcular mês a mês no ano de referência
       for (let m = 0; m < 12; m++) {
         walletTx.forEach((t) => {
           const d = new Date(t.date + "T12:00:00");
@@ -160,7 +168,6 @@ function CarteirasTab() {
         <StatCard title="Saldo Total" value={formatCurrency(totalBalance)}
           icon={<IconSymbol name="creditcard.fill" size={18} color={colors.primary} />} />
 
-        {/* AJUSTE 6: Gráfico de linha mês a mês - crescimento de cada carteira */}
         {walletMonthlyData.datasets.some((ds) => ds.data.some((v) => v > 0)) && (
           <Card title="Evolução das Carteiras" className="mt-4 mb-2">
             <DateNavigator
@@ -176,7 +183,6 @@ function CarteirasTab() {
           </Card>
         )}
 
-        {/* Lista de carteiras */}
         {wallets.map((wallet) => {
           const balance = getWalletBalance(wallet.id);
           const recentTx = walletTransactions
@@ -196,7 +202,6 @@ function CarteirasTab() {
                 <Text className="text-xs text-muted mb-2">Rendimento: {wallet.yieldRate}% ao mês (CDI)</Text>
               )}
 
-              {/* Botões */}
               <View className="flex-row gap-2 mb-3">
                 <TouchableOpacity onPress={() => { setDepositWallet(wallet.id); setDepositDesc("Depósito"); }}
                   style={{ flex: 1, backgroundColor: colors.success, borderRadius: 10, paddingVertical: 8, alignItems: "center" }}>
@@ -208,7 +213,6 @@ function CarteirasTab() {
                 </TouchableOpacity>
               </View>
 
-              {/* Form depósito/resgate */}
               {(depositWallet === wallet.id || depositWallet === `${wallet.id}_withdraw`) && (
                 <View className="bg-background border border-border rounded-xl p-3 mb-3">
                   <Text className="text-xs text-muted mb-1">Valor (R$)</Text>
@@ -231,18 +235,22 @@ function CarteirasTab() {
                 </View>
               )}
 
-              {/* Extrato */}
+              {/* Extrato com botão de excluir */}
               {recentTx.length > 0 && (
                 <>
                   <Text className="text-xs font-semibold text-muted mb-1 uppercase">Extrato</Text>
                   {recentTx.map((tx) => (
-                    <View key={tx.id} className="flex-row justify-between py-1.5 border-b border-border/50">
+                    <View key={tx.id} className="flex-row items-center py-1.5 border-b border-border/50">
                       <Text className="text-xs text-foreground flex-1">{tx.description}</Text>
                       <Text className="text-xs text-muted mx-2">{formatDate(tx.date)}</Text>
-                      <Text className="text-xs font-bold"
+                      <Text className="text-xs font-bold mr-2"
                         style={{ color: tx.type === "withdrawal" ? colors.error : colors.success }}>
                         {tx.type === "withdrawal" ? "-" : "+"}{formatCurrency(tx.value)}
                       </Text>
+                      <TouchableOpacity onPress={() => handleDeleteTransaction(tx.id, tx.description)}
+                        style={{ padding: 4 }}>
+                        <IconSymbol name="trash.fill" size={13} color={colors.error} />
+                      </TouchableOpacity>
                     </View>
                   ))}
                 </>
@@ -251,7 +259,6 @@ function CarteirasTab() {
           );
         })}
 
-        {/* Nova carteira */}
         <Text className="text-base font-bold text-foreground mt-6 mb-3">Nova Carteira</Text>
         <View className="flex-row gap-2">
           <TextInput className="flex-1 bg-surface border border-border rounded-xl px-4 py-3 text-foreground"
@@ -274,7 +281,6 @@ function ReservaTab() {
   const [pctInput, setPctInput] = useState((config.investmentPercentage || 10).toString());
   const [calcMode, setCalcMode] = useState<"weekly" | "monthly">(config.investmentCalcMode || "weekly");
   const [investMode, setInvestMode] = useState<"auto" | "manual">(config.investmentMode || "auto");
-  // AJUSTE 7.1: Estado para switch de reserva na meta semanal
   const [reserveInGoal, setReserveInGoal] = useState(config.reserveInWeeklyGoal || false);
 
   const now = new Date();
@@ -344,7 +350,6 @@ function ReservaTab() {
             ))}
           </View>
 
-          {/* AJUSTE 6: Automático ou Manual */}
           <Text className="text-xs text-muted mb-2 uppercase">Modo de investimento</Text>
           <View className="flex-row gap-2 mb-3">
             {(["auto", "manual"] as const).map((mode) => (
@@ -366,7 +371,6 @@ function ReservaTab() {
             placeholder="10" placeholderTextColor={colors.muted} keyboardType="decimal-pad"
             value={pctInput} onChangeText={setPctInput} returnKeyType="done" />
 
-          {/* AJUSTE 7.1: Switch para incluir reserva na meta semanal */}
           <View className="flex-row items-center justify-between bg-background border border-border rounded-xl px-4 py-3 mb-3">
             <View className="flex-1 mr-3">
               <Text className="text-sm font-semibold text-foreground">Incluir na Meta Semanal</Text>
@@ -463,7 +467,6 @@ function InvestimentosTab() {
           </Card>
         )}
 
-        {/* Form */}
         <Text className="text-lg font-bold text-foreground mb-3">Novo Registro</Text>
 
         <View className="flex-row gap-2 mb-3">
@@ -486,7 +489,6 @@ function InvestimentosTab() {
           placeholder="Ex: Tesouro Selic" placeholderTextColor={colors.muted}
           value={name} onChangeText={setName} returnKeyType="done" />
 
-        {/* Carteira */}
         <Text className="text-xs text-muted mb-1 uppercase">Carteira</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
           {(config.wallets || []).map((w) => (
@@ -528,7 +530,6 @@ function InvestimentosTab() {
           </Text>
         </TouchableOpacity>
 
-        {/* History */}
         <Text className="text-sm font-semibold text-muted mt-5 mb-2 uppercase">Histórico</Text>
         {sorted.map((inv) => (
           <View key={inv.id} className="flex-row items-center bg-surface border border-border rounded-xl p-3 mb-2">
