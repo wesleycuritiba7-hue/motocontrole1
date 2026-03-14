@@ -19,7 +19,6 @@ import {
   type CostPeriod,
 } from "@/lib/calculations";
 
-// ==================== SUB-TABS ====================
 type SubTab = "geral" | "ganhos" | "km" | "manutencao" | "media" | "previsao" | "config";
 
 const SUB_TABS: { key: SubTab; label: string }[] = [
@@ -38,7 +37,6 @@ export default function MotoScreen() {
 
   return (
     <ScreenContainer>
-      {/* AJUSTE 4/9: Submenus padronizados - mesmo estilo pill/chip em todas as abas */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}>
         {SUB_TABS.map((tab) => (
@@ -67,8 +65,7 @@ export default function MotoScreen() {
   );
 }
 
-// ==================== GERAL (Visão Geral) ====================
-// AJUSTE 1: Lucro Líquido = ganhos - custo KM (SEM deduzir manutenção)
+// ==================== GERAL ====================
 function GeralTab() {
   const { earnings, dailyKms, maintenance, config } = useData();
   const colors = useColors();
@@ -80,7 +77,6 @@ function GeralTab() {
   const customStart = period === "custom" ? new Date(parseDateInput(customStartStr)) : undefined;
   const customEnd = period === "custom" ? new Date(parseDateInput(customEndStr)) : undefined;
 
-  // AJUSTE 1: getCostRealData já calcula netProfit sem manutenção
   const data = getCostRealData(earnings, dailyKms, maintenance, config.costPerKm, period, refDate, customStart, customEnd);
 
   const handlePrev = () => {
@@ -102,57 +98,15 @@ function GeralTab() {
     ? formatMonthRange(refDate)
     : `${customStartStr} - ${customEndStr}`;
 
-  // AJUSTE 1: Gráfico - Lucro agora é ganhos - custoKM (sem manutenção separada)
-  const chartData = useMemo(() => {
-    if (period === "daily") {
-      return {
-        labels: ["Ganhos", "Custo KM", "Manutenção", "Lucro"],
-        data: [data.totalEarnings, data.kmCost, data.maintenanceCost, Math.max(0, data.netProfit)],
-        colors: ["#4ADE80", "#FBBF24", "#F87171", "#2196F3"],
-      };
-    }
-    if (period === "weekly") {
-      const days = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
-      const start = getStartOfWeek(refDate);
-      const earningsPerDay = new Array(7).fill(0);
-      const kmPerDay = new Array(7).fill(0);
-      earnings.forEach((e) => {
-        const d = new Date(e.date + "T12:00:00");
-        if (d >= start && d <= getEndOfWeek(refDate)) {
-          let idx = d.getDay() - 1;
-          if (idx < 0) idx = 6;
-          earningsPerDay[idx] += e.value;
-        }
-      });
-      dailyKms.forEach((e) => {
-        const d = new Date(e.date + "T12:00:00");
-        if (d >= start && d <= getEndOfWeek(refDate)) {
-          let idx = d.getDay() - 1;
-          if (idx < 0) idx = 6;
-          kmPerDay[idx] += e.km * config.costPerKm;
-        }
-      });
-      return { labels: days, earningsPerDay, kmPerDay };
-    }
-    if (period === "monthly") {
-      const daysInMonth = getEndOfMonth(refDate).getDate();
-      const labels: string[] = [];
-      const earningsPerDay: number[] = [];
-      const costPerDay: number[] = [];
-      for (let d = 1; d <= daysInMonth; d++) {
-        labels.push(String(d));
-        const dayStr = `${refDate.getFullYear()}-${String(refDate.getMonth() + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-        earningsPerDay.push(earnings.filter((e) => e.date === dayStr).reduce((s, e) => s + e.value, 0));
-        costPerDay.push(dailyKms.filter((e) => e.date === dayStr).reduce((s, e) => s + e.km, 0) * config.costPerKm);
-      }
-      return { labels, earningsPerDay, costPerDay };
-    }
-    return {
-      labels: ["Ganhos", "Custo KM", "Manutenção", "Lucro"],
-      data: [data.totalEarnings, data.kmCost, data.maintenanceCost, Math.max(0, data.netProfit)],
-      colors: ["#4ADE80", "#FBBF24", "#F87171", "#2196F3"],
-    };
-  }, [period, refDate, earnings, dailyKms, maintenance, config.costPerKm, data]);
+  // Mesmo gráfico para todos os períodos: barras com Ganhos, Custo KM, Manutenção, Lucro
+  const chartLabels = ["Ganhos", "Custo KM", "Manutenção", "Lucro"];
+  const chartData = [
+    data.totalEarnings,
+    data.kmCost,
+    data.maintenanceCost,
+    Math.max(0, data.netProfit),
+  ];
+  const chartColors = ["#4ADE80", "#FBBF24", "#F87171", "#2196F3"];
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
@@ -195,7 +149,6 @@ function GeralTab() {
           </View>
         )}
 
-        {/* Cards de resumo - AJUSTE 1: Lucro Líquido sem manutenção */}
         <View className="flex-row gap-3 mb-3">
           <StatCard title="Faturamento" value={formatCurrency(data.totalEarnings)}
             icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
@@ -215,36 +168,15 @@ function GeralTab() {
             icon={<IconSymbol name="gauge.medium" size={16} color={colors.muted} />} />
         </View>
 
-        {/* Gráfico */}
+        {/* Gráfico padronizado para todos os períodos - SEM showTotal */}
         <Card title={`Gráfico ${period === "daily" ? "Diário" : period === "weekly" ? "Semanal" : period === "monthly" ? "Mensal" : "Personalizado"}`} className="mb-4">
-          {(period === "daily" || period === "custom") && (chartData as any).data && (
-            <SimpleBarChart
-              labels={(chartData as any).labels}
-              data={(chartData as any).data}
-              barColors={(chartData as any).colors}
-              showValues showTotal height={140}
-            />
-          )}
-          {period === "weekly" && (chartData as any).earningsPerDay && (
-            <SimpleBarChart
-              labels={(chartData as any).labels}
-              data={(chartData as any).earningsPerDay}
-              secondaryData={(chartData as any).kmPerDay}
-              secondaryColor="#FBBF24"
-              color="#4ADE80"
-              showValues showTotal height={140}
-            />
-          )}
-          {period === "monthly" && (chartData as any).earningsPerDay && (
-            <SimpleLineChart
-              labels={(chartData as any).labels}
-              datasets={[
-                { data: (chartData as any).earningsPerDay, color: "#4ADE80", label: "Ganhos" },
-                { data: (chartData as any).costPerDay, color: "#F87171", label: "Custo KM" },
-              ]}
-              height={160} width={340} showTotal
-            />
-          )}
+          <SimpleBarChart
+            labels={chartLabels}
+            data={chartData}
+            barColors={chartColors}
+            showValues
+            height={140}
+          />
         </Card>
       </View>
     </ScrollView>
@@ -252,8 +184,6 @@ function GeralTab() {
 }
 
 // ==================== GANHOS ====================
-// AJUSTE 2.1: Gráfico de ganhos diários por app
-// AJUSTE 2.2: Remoção de botões "Dar Baixa" e "Editar/Parcial" + automação de baixa
 function GanhosTab() {
   const { earnings, addEarning, updateEarning, removeEarning, config, addWalletTransaction } = useData();
   const colors = useColors();
@@ -268,11 +198,7 @@ function GanhosTab() {
 
   const filtered = earnings.filter((e) => isInRange(e.date, start, end));
   const totalBruto = filtered.reduce((s, e) => s + e.value, 0);
-  // CORREÇÃO FINAL: Recebido = soma de receivedValue de TODOS os registros
-  // (received tem receivedValue = value, pending parcial tem receivedValue < value)
   const totalRecebido = filtered.reduce((s, e) => s + (e.receivedValue || 0), 0);
-  // CORREÇÃO FINAL: Pendente = totalBruto - totalRecebido
-  // Isso garante que: Bruto = Recebido + Pendente (sempre)
   const totalPendente = totalBruto - totalRecebido;
 
   const sorted = [...filtered].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -291,8 +217,6 @@ function GanhosTab() {
     setValue("");
   };
 
-  // AJUSTE 1/2.2: Automação de baixa - saque instantâneo + data de pagamento por app
-  // Processa TODOS os ganhos pendentes, inclusive retroativos (AJUSTE 4)
   useEffect(() => {
     const autoReceive = async () => {
       const paymentConfigs = config.appPaymentConfigs || [];
@@ -301,21 +225,18 @@ function GanhosTab() {
 
       for (const earning of earnings) {
         if (earning.status !== "pending") continue;
-
         const appConfig = paymentConfigs.find((p) => p.appName === earning.appName);
         if (!appConfig) continue;
 
-        // AJUSTE 1: Saque instantâneo - baixa imediata
         if (appConfig.paymentMode === "instant") {
           await updateEarning(earning.id, {
             status: "received",
             receivedValue: earning.value,
-            receivedDate: earning.date, // recebido no mesmo dia
+            receivedDate: earning.date,
           });
           continue;
         }
 
-        // AJUSTE 1: Dia seguinte - baixa no dia seguinte ao lançamento
         if (appConfig.paymentMode === "next_day") {
           const earningDate = new Date(earning.date + "T12:00:00");
           const nextDay = new Date(earningDate);
@@ -331,14 +252,11 @@ function GanhosTab() {
           continue;
         }
 
-        // Outros modos baseados em dia da semana
         const earningDate = new Date(earning.date + "T12:00:00");
         const weekEnd = getEndOfWeek(earningDate);
-
         const payDate = getPaymentDate(weekEnd, appConfig.paymentMode);
-        if (!payDate) continue; // manual = sem automação
+        if (!payDate) continue;
 
-        // Se a data de pagamento já passou, dar baixa automática
         if (today >= payDate) {
           await updateEarning(earning.id, {
             status: "received",
@@ -355,11 +273,9 @@ function GanhosTab() {
   const handlePrev = () => setRefDate(period === "week" ? shiftWeek(refDate, -1) : shiftMonth(refDate, -1));
   const handleNext = () => setRefDate(period === "week" ? shiftWeek(refDate, 1) : shiftMonth(refDate, 1));
 
-  // Gráfico por app
   const byApp: Record<string, number> = {};
   filtered.forEach((e) => { byApp[e.appName] = (byApp[e.appName] || 0) + e.value; });
 
-  // AJUSTE 2.1: Gráfico de ganhos diários por app (agrupado por dia da semana)
   const weeklyByApp = period === "week" ? getWeeklyEarningsByApp(earnings, refDate) : null;
 
   return (
@@ -393,7 +309,6 @@ function GanhosTab() {
           <StatCard title="Lançamentos" value={filtered.length.toString()} />
         </View>
 
-        {/* Gráfico por app */}
         {Object.keys(byApp).length > 0 && (
           <Card title="Ganhos por App" className="mb-4">
             <SimpleBarChart
@@ -405,7 +320,6 @@ function GanhosTab() {
           </Card>
         )}
 
-        {/* AJUSTE 2.1: Gráfico de ganhos diários por app (semanal) */}
         {period === "week" && weeklyByApp && weeklyByApp.datasets.length > 0 && (
           <Card title="Ganhos Diários por App" className="mb-4">
             <GroupedBarChart
@@ -420,7 +334,6 @@ function GanhosTab() {
           </Card>
         )}
 
-        {/* Formulário */}
         <Text className="text-base font-bold text-foreground mb-3">Novo Lançamento</Text>
 
         <Text className="text-xs text-muted mb-1 uppercase">Aplicativo</Text>
@@ -459,7 +372,6 @@ function GanhosTab() {
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>Lançar Ganho</Text>
         </TouchableOpacity>
 
-        {/* AJUSTE 2.2: Histórico SEM botões "Dar Baixa Total" e "Editar/Parcial" */}
         <Text className="text-sm font-semibold text-muted mb-2 uppercase">Histórico</Text>
         {sorted.map((e) => (
           <View key={e.id} className="bg-surface border border-border rounded-xl p-3 mb-2">
@@ -488,29 +400,24 @@ function GanhosTab() {
                 <IconSymbol name="trash.fill" size={16} color={colors.error} />
               </TouchableOpacity>
             </View>
-            {/* AJUSTE 2.2: Botões "Dar Baixa Total" e "Editar/Parcial" REMOVIDOS */}
-            {/* A baixa agora é automática baseada na configuração de pagamento do app */}
           </View>
         ))}
         {sorted.length === 0 && <Text className="text-sm text-muted text-center py-4">Nenhum ganho no período</Text>}
 
-        {/* AJUSTE 5: Baixa Manual de Recebimentos por App */}
         <BaixaManualSection earnings={filtered} updateEarning={updateEarning} addEarning={addEarning} config={config} colors={colors} />
       </View>
     </ScrollView>
   );
 }
 
-// AJUSTE 5: Componente de Baixa Manual por App
+// ==================== BAIXA MANUAL ====================
 function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, config, colors }: any) {
   const [selectedApp, setSelectedApp] = useState(config.apps[0] || "");
   const [receiveValue, setReceiveValue] = useState("");
 
-  // CORREÇÃO FINAL: Calcular pendente por app
-  // Pendente = value - receivedValue (acumulado) para cada ganho não totalmente recebido
   const pendingByApp: Record<string, { total: number; ids: string[] }> = {};
   filtered.forEach((e: any) => {
-    if (e.status === "received") return; // já totalmente recebido
+    if (e.status === "received") return;
     const pendingValue = e.value - (e.receivedValue || 0);
     if (pendingValue <= 0) return;
     if (!pendingByApp[e.appName]) pendingByApp[e.appName] = { total: 0, ids: [] };
@@ -535,12 +442,11 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
     }
 
     let remaining = parsedValue;
-    // Pegar ganhos pendentes (status != received) ordenados por data
     const pendingEarnings = filtered
       .filter((e: any) => e.appName === selectedApp && e.status !== "received")
       .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr2 = new Date().toISOString().split("T")[0];
     for (const earning of pendingEarnings) {
       if (remaining <= 0) break;
       const alreadyReceived = earning.receivedValue || 0;
@@ -548,19 +454,17 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
       if (stillPending <= 0) continue;
 
       if (remaining >= stillPending) {
-        // Baixa total deste ganho - marca como received
         await updateEarning(earning.id, {
           status: "received",
-          receivedValue: earning.value, // recebeu tudo
-          receivedDate: todayStr,
+          receivedValue: earning.value,
+          receivedDate: todayStr2,
         });
         remaining -= stillPending;
       } else {
-        // Baixa parcial - acumula receivedValue, mantém como pending
         await updateEarning(earning.id, {
           status: "pending",
           receivedValue: alreadyReceived + remaining,
-          receivedDate: todayStr,
+          receivedDate: todayStr2,
         });
         remaining = 0;
       }
@@ -622,7 +526,6 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
 }
 
 // ==================== KM ====================
-// AJUSTE 6: Fechamento automático da semana + Lançamento na Carteira Moto
 function KmTab() {
   const { dailyKms, addDailyKm, removeDailyKm, config, weeklyKmCosts, addWeeklyKmCost, updateWeeklyKmCost, addFinancial, addWalletTransaction } = useData();
   const colors = useColors();
@@ -639,14 +542,11 @@ function KmTab() {
   const weekKey = `${start.toISOString().split("T")[0]}`;
   const existingWeeklyCost = weeklyKmCosts.find((w) => w.weekStart === weekKey);
 
-  // AJUSTE 6: Fechamento automático - verifica se a semana já terminou
   useEffect(() => {
     const checkAutoClose = async () => {
       if (existingWeeklyCost) return;
       if (totalWeekKm <= 0) return;
-
       if (isWeekClosed(refDate)) {
-        // Fechar automaticamente
         await addWeeklyKmCost({
           weekStart: start.toISOString().split("T")[0],
           weekEnd: end.toISOString().split("T")[0],
@@ -655,7 +555,6 @@ function KmTab() {
           totalCost: weekCost,
           status: "closed",
         });
-        // AJUSTE 2/3 v6: Lançar custo KM como fatura com vencimento na quarta-feira da próxima semana
         const nextWednesday = getPaymentDate(end, "wednesday");
         const dueDate = nextWednesday ? nextWednesday.toISOString().split("T")[0] : end.toISOString().split("T")[0];
         await addFinancial({
@@ -669,8 +568,6 @@ function KmTab() {
           isFixed: false,
           isInstallment: false,
         });
-        // AJUSTE 3 v6: NÃO debitar da Carteira Moto no fechamento
-        // O débito só ocorre na baixa efetiva (quando isPaid = true)
       }
     };
     checkAutoClose();
@@ -695,7 +592,6 @@ function KmTab() {
       totalCost: weekCost,
       status: "closed",
     });
-    // AJUSTE 2 v6: Gerar fatura com vencimento na quarta-feira da próxima semana
     const nextWednesday = getPaymentDate(end, "wednesday");
     const dueDate = nextWednesday ? nextWednesday.toISOString().split("T")[0] : end.toISOString().split("T")[0];
     await addFinancial({
@@ -709,9 +605,8 @@ function KmTab() {
       isFixed: false,
       isInstallment: false,
     });
-    // AJUSTE 3 v6: NÃO debitar da Carteira Moto no fechamento (somente na baixa efetiva)
-    if (Platform.OS === "web") alert(`Custo KM de ${formatCurrency(weekCost)} lançado como fatura (venc. ${formatDate(dueDate)})`);
-    else Alert.alert("Sucesso", `Custo KM de ${formatCurrency(weekCost)} lançado como fatura (venc. ${formatDate(dueDate)})`);
+    if (Platform.OS === "web") alert(`Custo KM de ${formatCurrency(weekCost)} lançado!`);
+    else Alert.alert("Sucesso", `Custo KM de ${formatCurrency(weekCost)} lançado!`);
   };
 
   const days = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
@@ -737,14 +632,13 @@ function KmTab() {
           <StatCard title="Custo KM" value={formatCurrency(weekCost)} />
         </View>
 
-        {/* Status do fechamento */}
         <View className="bg-surface border rounded-xl p-3 mb-4" style={{ borderColor: existingWeeklyCost ? colors.success : colors.warning }}>
           <Text className="text-sm font-semibold" style={{ color: existingWeeklyCost ? colors.success : colors.warning }}>
             {existingWeeklyCost ? "Semana Fechada" : isWeekClosed(refDate) && totalWeekKm > 0 ? "Fechamento Automático" : "Semana Aberta"}
           </Text>
           <Text className="text-xs text-muted mt-1">
             {existingWeeklyCost
-              ? `Custo de ${formatCurrency(existingWeeklyCost.totalCost)} lançado no financeiro e Carteira Moto`
+              ? `Custo de ${formatCurrency(existingWeeklyCost.totalCost)} lançado no financeiro`
               : isWeekClosed(refDate) && totalWeekKm > 0
               ? "A semana terminou. O fechamento automático será processado."
               : "O custo KM será lançado automaticamente ao final do domingo"}
@@ -800,12 +694,9 @@ function KmTab() {
 }
 
 // ==================== MANUTENÇÃO ====================
-// AJUSTE 3: Manutenção lança automaticamente como gasto no financeiro (feito no data-context)
-// AJUSTE 6: Débito automático da Carteira Moto
 function ManutencaoTab() {
   const { maintenance, addMaintenance, removeMaintenance, config, addWalletTransaction } = useData();
   const colors = useColors();
-  // AJUSTE 3.1: Usar maintenanceCategories (com fallback para maintenanceItems)
   const maintenanceCats = config.maintenanceCategories || config.maintenanceItems || [];
   const [item, setItem] = useState(maintenanceCats[0] || "");
   const [kmVal, setKmVal] = useState("");
@@ -824,12 +715,10 @@ function ManutencaoTab() {
       return;
     }
     const loc = selectedWorkshop || location;
-    const maintenanceValue = parseFloat(value.replace(",", "."));
     await addMaintenance({
       item, km: parseFloat(kmVal.replace(",", ".") || "0"),
-      value: maintenanceValue, location: loc, date: parseDateInput(date),
+      value: parseFloat(value.replace(",", ".")), location: loc, date: parseDateInput(date),
     });
-    // AJUSTE 5.1: Débito da Carteira Moto agora é automático via data-context (addMaintenance)
     setKmVal(""); setValue(""); setLocation(""); setSelectedWorkshop("");
   };
 
@@ -929,7 +818,7 @@ function ManutencaoTab() {
 
         {workshops.length > 0 && (
           <>
-            <Text className="text-xs text-muted mb-1 uppercase">Oficina/Posto (Meus Locais)</Text>
+            <Text className="text-xs text-muted mb-1 uppercase">Oficina/Posto</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
               <TouchableOpacity onPress={() => setSelectedWorkshop("")}
                 style={{
@@ -992,7 +881,6 @@ function ManutencaoTab() {
 }
 
 // ==================== MÉDIA ====================
-// AJUSTE 4: Padronização dos submenus + filtro Semanal funcional
 function MediaTab() {
   const { earnings, dailyKms, config } = useData();
   const colors = useColors();
@@ -1012,20 +900,17 @@ function MediaTab() {
   const avgPerKm = totalKm > 0 ? totalEarnings / totalKm : 0;
   const costPerKmTotal = totalKm * config.costPerKm;
   const avgCostPerDay = costPerKmTotal / daysWorked;
+  const netProfit = totalEarnings - costPerKmTotal;
 
   const navLabel = filterMode === "weekly" ? formatWeekRange(refDate) : formatMonthRange(refDate);
   const handlePrev = () => setRefDate(filterMode === "weekly" ? shiftWeek(refDate, -1) : shiftMonth(refDate, -1));
   const handleNext = () => setRefDate(filterMode === "weekly" ? shiftWeek(refDate, 1) : shiftMonth(refDate, 1));
-
-  // AJUSTE 4 v6: Lucro líquido estimado
-  const netProfit = totalEarnings - costPerKmTotal;
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-3">Média</Text>
 
-        {/* AJUSTE 4 v6: Botões de filtro PADRONIZADOS (mesmo estilo pill/chip) */}
         <View className="flex-row gap-2 mb-3">
           {(["weekly", "monthly"] as const).map((mode) => (
             <TouchableOpacity key={mode} onPress={() => { setFilterMode(mode); setRefDate(new Date()); }}
@@ -1043,7 +928,6 @@ function MediaTab() {
 
         <DateNavigator label={navLabel} onPrev={handlePrev} onNext={handleNext} />
 
-        {/* AJUSTE 4 v6: StatCards com ícones padronizados */}
         <View className="flex-row gap-3 mb-3">
           <StatCard title="Média/Dia" value={formatCurrency(avgPerDay)}
             icon={<IconSymbol name="chart.bar.fill" size={16} color={colors.success} />} />
@@ -1074,7 +958,6 @@ function MediaTab() {
           <View className="flex-1" />
         </View>
 
-        {/* AJUSTE 4 v6: Gráfico comparativo Ganhos vs Custo KM */}
         <Card title="Ganhos vs Custo KM" className="mb-4">
           <SimpleBarChart
             labels={["Ganhos", "Custo KM", "Lucro"]}
@@ -1127,8 +1010,7 @@ function PrevisaoTab() {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    if (Platform.OS === "web") alert("Configurações salvas com sucesso!");
-    else Alert.alert("Sucesso", "Configurações de previsão salvas!");
+    if (Platform.OS === "web") alert("Configurações salvas!"); else Alert.alert("Sucesso", "Configurações salvas!");
   };
 
   const handleAddItem = async () => {
@@ -1144,13 +1026,10 @@ function PrevisaoTab() {
     setItemName(""); setItemCost(""); setItemKm("");
   };
 
-  // AJUSTE 5: Cards de resumo - Lucro Bruto, Gasto por KM, Lucro Líquido
   const lucroBrutoMensal = result.earningMonthly;
   const gastoKmMensal = result.kmPerMonth * result.realCostPerKm;
   const lucroLiquidoMensal = lucroBrutoMensal - result.totalMonthlyCost;
-
   const lucroBrutoAnual = result.earningAnnual;
-  const gastoKmAnual = result.kmPerYear * result.realCostPerKm;
   const lucroLiquidoAnual = lucroBrutoAnual - result.totalAnnualCost;
 
   return (
@@ -1158,7 +1037,6 @@ function PrevisaoTab() {
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-4">Previsão</Text>
 
-        {/* AJUSTE 5: Cards de resumo - Lucro Bruto, Gasto por KM, Lucro Líquido */}
         <View className="flex-row gap-3 mb-3">
           <StatCard title="Lucro Bruto (Mês)" value={formatCurrency(lucroBrutoMensal)}
             icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
@@ -1194,15 +1072,9 @@ function PrevisaoTab() {
           <Text className="text-xs text-muted mb-1 uppercase">Dias por Semana</Text>
           <TextInput className="bg-background border border-border rounded-xl px-3 py-2 text-foreground mb-3"
             keyboardType="number-pad" value={daysPerWeek} onChangeText={setDaysPerWeek} returnKeyType="done" />
-
           <TouchableOpacity onPress={handleSaveConfig}
-            style={{
-              backgroundColor: saved ? colors.success : colors.primary,
-              borderRadius: 12, paddingVertical: 10, alignItems: "center",
-            }}>
-            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
-              {saved ? "Salvo!" : "Salvar Configurações"}
-            </Text>
+            style={{ backgroundColor: saved ? colors.success : colors.primary, borderRadius: 12, paddingVertical: 10, alignItems: "center" }}>
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>{saved ? "Salvo!" : "Salvar Configurações"}</Text>
           </TouchableOpacity>
         </Card>
 
@@ -1306,7 +1178,6 @@ function PrevisaoTab() {
 }
 
 // ==================== CONFIG ====================
-// AJUSTE 5: Exportar/Importar + Pagamento por App com dias da semana
 function ConfigTab() {
   const { config, saveConfig, exportData, importData } = useData();
   const colors = useColors();
@@ -1318,34 +1189,8 @@ function ConfigTab() {
   const [newWorkshopName, setNewWorkshopName] = useState("");
   const [newWorkshopAddress, setNewWorkshopAddress] = useState("");
   const [newWorkshopPhone, setNewWorkshopPhone] = useState("");
-  // AJUSTE 3.1: Estado para nova categoria de manutenção
   const [newMaintenanceCategory, setNewMaintenanceCategory] = useState("");
-  // AJUSTE 4.1: Opções de cores para apps
   const colorOptions = ["#EA1D2C", "#FFCC00", "#FF6B00", "#F57C00", "#00B0FF", "#06C167", "#2ECC40", "#000000", "#9C27B0", "#E91E63", "#3F51B5", "#009688", "#795548", "#607D8B"];
-
-  // AJUSTE 5.2: Modos de pagamento expandidos com dias da semana
-  const paymentModes = [
-    { key: "next_day", label: "Dia Seguinte" },
-    { key: "monday", label: "Segunda" },
-    { key: "tuesday", label: "Terça" },
-    { key: "wednesday", label: "Quarta" },
-    { key: "thursday", label: "Quinta" },
-    { key: "friday", label: "Sexta" },
-    { key: "weekly", label: "Semanal" },
-    { key: "manual", label: "Manual" },
-    { key: "instant", label: "Saque Instantâneo" },
-  ] as const;
-
-  const getPaymentMode = (appName: string) => {
-    const found = paymentConfigs.find((p) => p.appName === appName);
-    return found?.paymentMode || "manual";
-  };
-
-  const setPaymentMode = (appName: string, mode: string) => {
-    const updated = paymentConfigs.filter((p) => p.appName !== appName);
-    updated.push({ appName, paymentMode: mode as any });
-    setPaymentConfigs(updated);
-  };
 
   const handleSave = async () => {
     await saveConfig({
@@ -1358,7 +1203,6 @@ function ConfigTab() {
     if (Platform.OS === "web") alert("Configurações salvas!"); else Alert.alert("Sucesso", "Configurações salvas!");
   };
 
-  // AJUSTE 3.1: Handlers para categorias de manutenção
   const handleAddMaintenanceCategory = async () => {
     if (!newMaintenanceCategory.trim()) return;
     const cats = [...(config.maintenanceCategories || config.maintenanceItems || []), newMaintenanceCategory.trim()];
@@ -1381,7 +1225,6 @@ function ConfigTab() {
     }
   };
 
-  // AJUSTE 4.1: Handler para definir cor do app
   const handleSetAppColor = async (appName: string, color: string) => {
     const appColors = { ...(config.appColors || {}), [appName]: color };
     await saveConfig({ appColors });
@@ -1411,18 +1254,14 @@ function ConfigTab() {
       phone: newWorkshopPhone.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
-    const updated = [...workshops, newWs];
-    setWorkshops(updated);
-    setNewWorkshopName("");
-    setNewWorkshopAddress("");
-    setNewWorkshopPhone("");
+    setWorkshops([...workshops, newWs]);
+    setNewWorkshopName(""); setNewWorkshopAddress(""); setNewWorkshopPhone("");
   };
 
   const handleRemoveWorkshop = (id: string) => {
     setWorkshops(workshops.filter((w) => w.id !== id));
   };
 
-  // AJUSTE 5.1: Exportar dados
   const handleExport = async () => {
     try {
       const data = await exportData();
@@ -1434,16 +1273,15 @@ function ConfigTab() {
         a.download = `MotoControle_backup_${new Date().toISOString().split("T")[0]}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        alert("Dados exportados com sucesso!");
+        alert("Dados exportados!");
       } else {
         await Share.share({ message: data, title: "MotoControle Backup" });
       }
     } catch (err) {
-      if (Platform.OS === "web") alert("Erro ao exportar"); else Alert.alert("Erro", "Falha ao exportar dados");
+      if (Platform.OS === "web") alert("Erro ao exportar"); else Alert.alert("Erro", "Falha ao exportar");
     }
   };
 
-  // AJUSTE 5.1: Importar dados
   const handleImport = async () => {
     if (Platform.OS === "web") {
       const input = document.createElement("input");
@@ -1454,12 +1292,11 @@ function ConfigTab() {
         if (!file) return;
         const text = await file.text();
         const success = await importData(text);
-        if (success) alert("Dados importados com sucesso!");
-        else alert("Erro: arquivo inválido");
+        if (success) alert("Dados importados!"); else alert("Erro: arquivo inválido");
       };
       input.click();
     } else {
-      Alert.alert("Importar", "Para importar dados, copie o conteúdo JSON e use a opção de restauração no Dashboard.");
+      Alert.alert("Importar", "Para importar dados, use a opção de restauração no Dashboard.");
     }
   };
 
@@ -1468,9 +1305,8 @@ function ConfigTab() {
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-4">Configurações</Text>
 
-        {/* AJUSTE 5.1: Exportar e Importar Dados */}
         <Card title="Backup de Dados" className="mb-4">
-          <Text className="text-xs text-muted mb-3">Exporte seus dados para backup ou importe dados de um backup anterior.</Text>
+          <Text className="text-xs text-muted mb-3">Exporte seus dados para backup ou importe de um backup anterior.</Text>
           <View className="flex-row gap-2">
             <TouchableOpacity onPress={handleExport}
               style={{ flex: 1, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center" }}>
@@ -1496,15 +1332,11 @@ function ConfigTab() {
                 keyboardType="number-pad" value={workDays} onChangeText={setWorkDays} returnKeyType="done" />
             </View>
           </View>
-          <Text className="text-xs text-muted">
-            O valor do Custo/KM será usado em todos os cálculos do aplicativo.
-          </Text>
+          <Text className="text-xs text-muted">O valor do Custo/KM será usado em todos os cálculos.</Text>
         </Card>
 
-        {/* Meus Locais */}
         <Card title="Meus Locais" className="mb-4">
           <Text className="text-xs text-muted mb-3">Cadastre oficinas mecânicas e postos de gasolina</Text>
-
           {workshops.map((ws) => (
             <View key={ws.id} className="flex-row items-center bg-background border border-border rounded-xl p-3 mb-2">
               <View className="flex-1">
@@ -1517,12 +1349,10 @@ function ConfigTab() {
               </TouchableOpacity>
             </View>
           ))}
-
           <Text className="text-xs text-muted mb-1 uppercase mt-2">Nome</Text>
           <TextInput className="bg-background border border-border rounded-xl px-3 py-2 text-foreground mb-2"
             placeholder="Ex: Oficina do João" placeholderTextColor={colors.muted}
             value={newWorkshopName} onChangeText={setNewWorkshopName} returnKeyType="done" />
-
           <View className="flex-row gap-2 mb-2">
             <View className="flex-1">
               <Text className="text-xs text-muted mb-1 uppercase">Endereço</Text>
@@ -1537,16 +1367,12 @@ function ConfigTab() {
                 value={newWorkshopPhone} onChangeText={setNewWorkshopPhone} returnKeyType="done" />
             </View>
           </View>
-
           <TouchableOpacity onPress={handleAddWorkshop}
             style={{ backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 10, alignItems: "center" }}>
             <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Adicionar Local</Text>
           </TouchableOpacity>
         </Card>
 
-        {/* AJUSTE 5: Card "Pagamento por App" REMOVIDO - baixa agora é manual na aba Ganhos */}
-
-        {/* AJUSTE 3.1: Gerenciamento de Categorias de Manutenção */}
         <Card title="Categorias de Manutenção" className="mb-4">
           <Text className="text-xs text-muted mb-3">Gerencie as categorias de manutenção da sua moto</Text>
           <View className="flex-row flex-wrap gap-2 mb-3">
@@ -1570,7 +1396,6 @@ function ConfigTab() {
           </View>
         </Card>
 
-        {/* AJUSTE 4.1: Cores Personalizadas para Apps */}
         <Card title="Cores dos Aplicativos" className="mb-4">
           <Text className="text-xs text-muted mb-3">Personalize a cor de cada aplicativo nos gráficos</Text>
           {config.apps.map((app: string) => {
@@ -1593,9 +1418,8 @@ function ConfigTab() {
           })}
         </Card>
 
-        {/* Aplicativos */}
         <Card title="Aplicativos" className="mb-4">
-          <Text className="text-xs text-muted mb-3">Gerencie seus aplicativos de entrega e fontes de renda</Text>
+          <Text className="text-xs text-muted mb-3">Gerencie seus aplicativos de entrega</Text>
           <View className="flex-row flex-wrap gap-2 mb-3">
             {config.apps.map((app) => (
               <View key={app} className="flex-row items-center bg-surface border border-border rounded-xl px-3 py-2">
