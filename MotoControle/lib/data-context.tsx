@@ -123,9 +123,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // AJUSTE 1 v6: Auto-replicação de contas fixas (mensais e semanais) - CORRIGIDO
-  // Agora replica para o mês atual, próximo e o seguinte (3 meses)
-  // Para semanais, replica para as próximas 4 semanas
+  // Auto-replicação de contas fixas (mensais e semanais)
+  // Mensais: replica para os próximos 12 meses
+  // Semanais: replica para as próximas 52 semanas
   const autoReplicateRan = useRef(false);
   useEffect(() => {
     if (loading || autoReplicateRan.current) return;
@@ -135,33 +135,53 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const now = new Date();
       let changed = false;
 
-      // Fixas Mensais: replicar para o mês atual e os próximos 2 meses
+      // Fixas Mensais: replicar para os próximos 12 meses
       const fixedMonthly = allFinancials.filter((f) => f.isFixed && f.fixedPeriod === "monthly");
-      // Agrupar por descrição para pegar o "template" original
       const monthlyTemplates: Record<string, typeof fixedMonthly[0]> = {};
       fixedMonthly.forEach((f) => {
-        if (!monthlyTemplates[f.description]) monthlyTemplates[f.description] = f;
+        const key = f.description;
+        if (!monthlyTemplates[key]) {
+          monthlyTemplates[key] = f;
+        }
       });
+
       for (const bill of Object.values(monthlyTemplates)) {
-        const billDue = new Date(bill.dueDate || bill.date);
-        for (let offset = 0; offset <= 2; offset++) {
-          const targetMonth = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-          const maxDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
-          const day = Math.min(billDue.getDate(), maxDay);
-          const targetDue = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), day);
-          const targetDueStr = targetDue.toISOString().split("T")[0];
-          const exists = allFinancials.some((f) =>
-            f.description === bill.description &&
-            f.isFixed &&
-            f.fixedPeriod === "monthly" &&
-            new Date(f.dueDate || f.date).getMonth() === targetDue.getMonth() &&
-            new Date(f.dueDate || f.date).getFullYear() === targetDue.getFullYear()
-          );
+        const dueDateStr = bill.dueDate || bill.date;
+        const parts = dueDateStr.split("-");
+        const originalDay = parseInt(parts[2], 10);
+
+        for (let offset = 0; offset <= 11; offset++) {
+          const totalMonths = now.getMonth() + offset;
+          const targetYear = now.getFullYear() + Math.floor(totalMonths / 12);
+          const targetMonth = totalMonths % 12;
+          const maxDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+          const day = Math.min(originalDay, maxDay);
+          const targetDueStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+          const exists = allFinancials.some((f) => {
+            const fDate = f.dueDate || f.date;
+            const fParts = fDate.split("-");
+            return (
+              f.description === bill.description &&
+              f.isFixed &&
+              f.fixedPeriod === "monthly" &&
+              parseInt(fParts[0]) === targetYear &&
+              parseInt(fParts[1]) - 1 === targetMonth
+            );
+          });
+
           if (!exists) {
             const newItem = await FinancialDB.add({
-              type: bill.type, description: bill.description, value: bill.value,
-              category: bill.category, date: targetDueStr, dueDate: targetDueStr,
-              isPaid: false, isFixed: true, fixedPeriod: "monthly", isInstallment: false,
+              type: bill.type,
+              description: bill.description,
+              value: bill.value,
+              category: bill.category,
+              date: targetDueStr,
+              dueDate: targetDueStr,
+              isPaid: false,
+              isFixed: true,
+              fixedPeriod: "monthly",
+              isInstallment: false,
             });
             allFinancials.push(newItem);
             changed = true;
@@ -169,34 +189,46 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Fixas Semanais: replicar para as próximas 4 semanas
+      // Fixas Semanais: replicar para as próximas 52 semanas
       const fixedWeekly = allFinancials.filter((f) => f.isFixed && f.fixedPeriod === "weekly");
       const weeklyTemplates: Record<string, typeof fixedWeekly[0]> = {};
       fixedWeekly.forEach((f) => {
         if (!weeklyTemplates[f.description]) weeklyTemplates[f.description] = f;
       });
+
       for (const bill of Object.values(weeklyTemplates)) {
-        const billDue = new Date(bill.dueDate || bill.date);
+        const dueDateStr = bill.dueDate || bill.date;
+        const billDue = new Date(dueDateStr + "T12:00:00");
         const dayOfWeek = billDue.getDay();
-        for (let weekOffset = 0; weekOffset <= 3; weekOffset++) {
+
+        for (let weekOffset = 0; weekOffset <= 51; weekOffset++) {
           const refDate = new Date(now);
           refDate.setDate(refDate.getDate() + weekOffset * 7);
           const currentDay = refDate.getDay();
           const diff = dayOfWeek - currentDay;
           const targetDate = new Date(refDate);
           targetDate.setDate(targetDate.getDate() + diff);
-          const targetStr = targetDate.toISOString().split("T")[0];
+          const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
+
           const exists = allFinancials.some((f) =>
             f.description === bill.description &&
             f.isFixed &&
             f.fixedPeriod === "weekly" &&
             (f.dueDate || f.date) === targetStr
           );
+
           if (!exists && targetDate >= billDue) {
             const newItem = await FinancialDB.add({
-              type: bill.type, description: bill.description, value: bill.value,
-              category: bill.category, date: targetStr, dueDate: targetStr,
-              isPaid: false, isFixed: true, fixedPeriod: "weekly", isInstallment: false,
+              type: bill.type,
+              description: bill.description,
+              value: bill.value,
+              category: bill.category,
+              date: targetStr,
+              dueDate: targetStr,
+              isPaid: false,
+              isFixed: true,
+              fixedPeriod: "weekly",
+              isInstallment: false,
             });
             allFinancials.push(newItem);
             changed = true;
@@ -209,12 +241,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     autoReplicate();
   }, [loading, refresh]);
 
-  // Earnings - AJUSTE 1: Automação de baixa para saque instantâneo
+  // Earnings
   const addEarning = useCallback(async (e: Omit<MotoEarning, "id" | "createdAt">) => {
     const paymentConfigs = config.appPaymentConfigs || [];
     const appConfig = paymentConfigs.find((p) => p.appName === e.appName);
-    
-    // Se o app está configurado como "instant", já marcar como recebido
     if (appConfig && appConfig.paymentMode === "instant") {
       const today = new Date().toISOString().split("T")[0];
       await MotoEarningsDB.add({
@@ -228,6 +258,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
     await refresh();
   }, [refresh, config.appPaymentConfigs]);
+
   const updateEarning = useCallback(async (id: string, data: Partial<MotoEarning>) => {
     await MotoEarningsDB.update(id, data); await refresh();
   }, [refresh]);
@@ -246,17 +277,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     await DailyKmDB.remove(id); await refresh();
   }, [refresh]);
 
-  // Maintenance - AJUSTE 2: Ao adicionar, lança no financeiro. Ao remover, remove financeiro E carteira.
-  // AJUSTE 5.1: Ao adicionar manutenção, lançar no financeiro E debitar da Carteira Moto
+  // Maintenance
   const addMaintenance = useCallback(async (m: Omit<Maintenance, "id" | "createdAt">) => {
     const newItem = await MaintenanceDB.add(m);
-    // Lançar como gasto no financeiro com referência ao ID da manutenção
     await FinancialDB.add({
       type: "expense", category: "Manutenção Moto",
       description: `Manutenção: ${m.item}${m.location ? ` - ${m.location}` : ""}`,
       value: m.value, date: m.date, isPaid: true, isFixed: false, isInstallment: false,
     });
-    // AJUSTE 5.1: Debitar automaticamente da Carteira Moto
     const currentConfig = await ConfigDB.get();
     const motoWallet = (currentConfig.wallets || []).find((w: any) => w.name === "Moto" || w.id === "wallet_moto");
     if (motoWallet) {
@@ -275,18 +303,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     await MaintenanceDB.update(id, data); await refresh();
   }, [refresh]);
 
-  // AJUSTE 2: Ao remover manutenção, remover TAMBÉM o lançamento financeiro correspondente
-  // E reverter a transação da Carteira Moto
   const removeMaintenance = useCallback(async (id: string) => {
-    // Buscar o registro de manutenção antes de remover
     const allMaint = await MaintenanceDB.getAll();
     const maintItem = allMaint.find((m) => m.id === id);
-
-    // Remover o registro de manutenção
     await MaintenanceDB.remove(id);
-
     if (maintItem) {
-      // Remover o lançamento financeiro correspondente
       const allFinancials = await FinancialDB.getAll();
       const matchingFinancial = allFinancials.find((f) =>
         f.category === "Manutenção Moto" &&
@@ -294,22 +315,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         Math.abs(f.value - maintItem.value) < 0.01 &&
         f.date === maintItem.date
       );
-      if (matchingFinancial) {
-        await FinancialDB.remove(matchingFinancial.id);
-      }
-
-      // AJUSTE 2: Remover a transação correspondente da Carteira Moto
+      if (matchingFinancial) await FinancialDB.remove(matchingFinancial.id);
       const allWalletTx = await WalletTransactionDB.getAll();
       const matchingWalletTx = allWalletTx.find((t) =>
         t.type === "withdrawal" &&
         t.description.includes(maintItem.item) &&
         Math.abs(t.value - maintItem.value) < 0.01
       );
-      if (matchingWalletTx) {
-        await WalletTransactionDB.remove(matchingWalletTx.id);
-      }
+      if (matchingWalletTx) await WalletTransactionDB.remove(matchingWalletTx.id);
     }
-
     await refresh();
   }, [refresh]);
 
@@ -334,11 +348,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const removeFinancial = useCallback(async (id: string) => {
     await FinancialDB.remove(id); await refresh();
   }, [refresh]);
-  // AJUSTE 1 v6: Excluir todas as parcelas do grupo
   const removeFinancialInstallmentGroup = useCallback(async (id: string) => {
     await FinancialDB.removeInstallmentGroup(id); await refresh();
   }, [refresh]);
-  // AJUSTE 1 v6: Excluir parcelas futuras a partir da selecionada
   const removeFinancialInstallmentFuture = useCallback(async (id: string) => {
     await FinancialDB.removeInstallmentFuture(id); await refresh();
   }, [refresh]);
