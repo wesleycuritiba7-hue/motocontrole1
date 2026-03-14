@@ -58,7 +58,6 @@ function GeralTab() {
   const [withdrawValue, setWithdrawValue] = useState("");
   const [withdrawDesc, setWithdrawDesc] = useState("");
 
-  // Cálculos do saldo isolado do Rolo
   const totalGasto = useMemo(() => {
     return roloProducts.reduce((s, p) => s + (p.purchasePrice * p.quantity), 0);
   }, [roloProducts]);
@@ -74,7 +73,6 @@ function GeralTab() {
   const ganhoLiquido = totalGanho - totalGasto;
   const saldo = totalGanho - totalGasto - totalSaques;
 
-  // Dinheiro parado = valor de compra dos produtos com estoque pendente
   const dinheiroParado = useMemo(() => {
     return roloProducts.reduce((s, p) => {
       const remaining = p.quantity - p.quantitySold;
@@ -82,7 +80,6 @@ function GeralTab() {
     }, 0);
   }, [roloProducts]);
 
-  // AJUSTE 2.2: Potencial de Ganho = estoque restante * preço de venda sugerido
   const potencialGanho = useMemo(() => {
     return roloProducts.reduce((s, p) => {
       const remaining = p.quantity - p.quantitySold;
@@ -90,10 +87,8 @@ function GeralTab() {
     }, 0);
   }, [roloProducts]);
 
-  // Crescimento (%)
   const crescimento = totalGasto > 0 ? ((totalGanho - totalGasto) / totalGasto) * 100 : 0;
 
-  // Gráficos mensais
   const year = yearRef.getFullYear();
   const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
@@ -120,10 +115,12 @@ function GeralTab() {
       lucroData[i] = ganhosData[i] - gastosData[i];
     }
 
-    // AJUSTE 2.3: Lucro acumulado corrigido - acumula ganhos - gastos progressivamente
-    const lucroAcum = [...lucroData];
-    for (let i = 1; i < 12; i++) {
-      lucroAcum[i] += lucroAcum[i - 1];
+    // Lucro acumulado - soma progressiva correta
+    const lucroAcum = new Array(12).fill(0);
+    let acumulado = 0;
+    for (let i = 0; i < 12; i++) {
+      acumulado += ganhosData[i] - gastosData[i];
+      lucroAcum[i] = acumulado;
     }
 
     return { gastosData, ganhosData, lucroData, lucroAcum };
@@ -155,7 +152,6 @@ function GeralTab() {
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
-        {/* Cards de indicadores */}
         <View className="flex-row gap-3 mb-3">
           <StatCard title="Saldo Rolo" value={formatCurrency(saldo)}
             icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={saldo >= 0 ? colors.success : colors.error} />} />
@@ -181,8 +177,7 @@ function GeralTab() {
             icon={<IconSymbol name="tag.fill" size={16} color={colors.success} />} />
         </View>
 
-        {/* AJUSTE 2.3: Gráfico de linha - Lucro Mensal */}
-        {(monthlyData.lucroData && monthlyData.lucroData.some((v: number) => v !== 0)) && (
+        {(monthlyData.lucroData.some((v: number) => v !== 0)) && (
           <Card title="Lucro por Mês" className="mb-4">
             <DateNavigator label={formatYearRange(yearRef)}
               onPrev={() => setYearRef(shiftYear(yearRef, -1))}
@@ -196,7 +191,6 @@ function GeralTab() {
           </Card>
         )}
 
-        {/* Gráfico de linha - Evolução do Lucro Líquido Acumulado */}
         {(monthlyData.lucroAcum.some((v) => v !== 0)) && (
           <Card title="Lucro Acumulado" className="mb-4">
             <DateNavigator label={formatYearRange(yearRef)}
@@ -212,7 +206,6 @@ function GeralTab() {
           </Card>
         )}
 
-        {/* Gráfico de barras - Gastos vs Ganhos */}
         {(monthlyData.gastosData.some((v) => v !== 0) || monthlyData.ganhosData.some((v) => v !== 0)) && (
           <Card title="Gastos vs Ganhos (Mensal)" className="mb-4">
             <SimpleBarChart
@@ -226,7 +219,6 @@ function GeralTab() {
           </Card>
         )}
 
-        {/* Saque */}
         <Card title="Saque para Saldo Geral" className="mb-4">
           <Text className="text-xs text-muted mb-2">
             Transfira valores do saldo "Rolo" para o saldo geral do aplicativo.
@@ -245,7 +237,6 @@ function GeralTab() {
           </TouchableOpacity>
         </Card>
 
-        {/* Histórico de saques */}
         {roloWithdrawals.length > 0 && (
           <>
             <Text className="text-sm font-semibold text-muted mb-2 uppercase">Saques Realizados</Text>
@@ -267,19 +258,17 @@ function GeralTab() {
   );
 }
 
-// ==================== COMPRA (Entrada de Estoque) ====================
+// ==================== COMPRA ====================
 function CompraTab() {
   const { roloProducts, addRoloProduct, removeRoloProduct } = useData();
   const colors = useColors();
   const [name, setName] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
   const [quantity, setQuantity] = useState("1");
-  // AJUSTE 2.5: Margem de lucro padrão 50%
   const [profitMargin, setProfitMargin] = useState("50");
   const [suggestedPrice, setSuggestedPrice] = useState("");
   const [date, setDate] = useState(todayFormatted());
 
-  // Calcular preço sugerido quando mudam os valores
   const calcSuggestedPrice = () => {
     const price = parseFloat(purchasePrice.replace(",", ".")) || 0;
     const margin = parseFloat(profitMargin.replace(",", ".")) || 0;
@@ -348,7 +337,7 @@ function CompraTab() {
             <Text className="text-xs text-muted mb-1 uppercase">Valor de Compra (R$)</Text>
             <TextInput className="bg-surface border border-border rounded-xl px-4 py-3 text-foreground"
               placeholder="0,00" placeholderTextColor={colors.muted} keyboardType="decimal-pad"
-              value={purchasePrice} onChangeText={(v) => { setPurchasePrice(v); }} returnKeyType="done"
+              value={purchasePrice} onChangeText={setPurchasePrice} returnKeyType="done"
               onBlur={calcSuggestedPrice} />
           </View>
           <View className="flex-1">
@@ -364,7 +353,7 @@ function CompraTab() {
             <Text className="text-xs text-muted mb-1 uppercase">Margem de Lucro (%)</Text>
             <TextInput className="bg-surface border border-border rounded-xl px-4 py-3 text-foreground"
               placeholder="30" placeholderTextColor={colors.muted} keyboardType="decimal-pad"
-              value={profitMargin} onChangeText={(v) => { setProfitMargin(v); }} returnKeyType="done"
+              value={profitMargin} onChangeText={setProfitMargin} returnKeyType="done"
               onBlur={calcSuggestedPrice} />
           </View>
           <View className="flex-1">
@@ -394,7 +383,6 @@ function CompraTab() {
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>Cadastrar Compra</Text>
         </TouchableOpacity>
 
-        {/* Lista de produtos */}
         <Text className="text-sm font-semibold text-muted mt-5 mb-2 uppercase">Estoque</Text>
         {sorted.map((p) => {
           const remaining = p.quantity - p.quantitySold;
@@ -423,7 +411,7 @@ function CompraTab() {
   );
 }
 
-// ==================== VENDA (Saída de Estoque) ====================
+// ==================== VENDA ====================
 function VendaTab() {
   const { roloProducts, roloSales, addRoloSale, removeRoloSale, updateRoloProduct } = useData();
   const colors = useColors();
@@ -431,14 +419,9 @@ function VendaTab() {
   const [saleQuantity, setSaleQuantity] = useState("1");
   const [salePrice, setSalePrice] = useState("");
   const [date, setDate] = useState(todayFormatted());
-  // Edição pré-baixa
-  const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
-  const [editSaleValue, setEditSaleValue] = useState("");
 
-  // Produtos com estoque disponível
   const availableProducts = roloProducts.filter((p) => p.quantity - p.quantitySold > 0);
 
-  // Quando seleciona um produto, preencher preço sugerido
   const handleSelectProduct = (id: string) => {
     setSelectedProductId(id);
     const product = roloProducts.find((p) => p.id === id);
@@ -476,7 +459,6 @@ function VendaTab() {
       date: parseDateInput(date),
     });
 
-    // Atualizar estoque do produto
     await updateRoloProduct(product.id, {
       quantitySold: product.quantitySold + qty,
     });
@@ -490,7 +472,6 @@ function VendaTab() {
 
   const handleDeleteSale = (sale: typeof roloSales[0]) => {
     const doDelete = async () => {
-      // Reverter estoque
       const product = roloProducts.find((p) => p.id === sale.productId);
       if (product) {
         await updateRoloProduct(product.id, {
@@ -516,7 +497,6 @@ function VendaTab() {
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-3">Nova Venda</Text>
 
-        {/* Seleção de produto */}
         <Text className="text-xs text-muted mb-1 uppercase">Selecionar Produto</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
           {availableProducts.map((p) => {
@@ -576,7 +556,6 @@ function VendaTab() {
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>Registrar Venda</Text>
         </TouchableOpacity>
 
-        {/* Histórico de vendas */}
         <Text className="text-sm font-semibold text-muted mt-5 mb-2 uppercase">Histórico de Vendas</Text>
         {sortedSales.map((sale) => {
           const product = roloProducts.find((p) => p.id === sale.productId);
