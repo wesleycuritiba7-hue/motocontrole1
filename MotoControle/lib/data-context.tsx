@@ -123,9 +123,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Auto-replicação de contas fixas (mensais e semanais)
-  // Mensais: replica para os próximos 12 meses
-  // Semanais: replica para as próximas 52 semanas
+  // Auto-replicação de contas fixas
   const autoReplicateRan = useRef(false);
   useEffect(() => {
     if (loading || autoReplicateRan.current) return;
@@ -239,7 +237,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (changed) await refresh();
     };
     autoReplicate();
-  }, [loading, refresh]);
+  }, [loading, financials, refresh]);
 
   // Earnings
   const addEarning = useCallback(async (e: Omit<MotoEarning, "id" | "createdAt">) => {
@@ -340,8 +338,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // Financial
   const addFinancial = useCallback(async (f: Omit<FinancialEntry, "id" | "createdAt">) => {
-    await FinancialDB.add(f); await refresh();
+    await FinancialDB.add(f);
+    // Se for conta fixa, resetar para replicar automaticamente
+    if (f.isFixed) {
+      autoReplicateRan.current = false;
+    }
+    await refresh();
   }, [refresh]);
+
   const updateFinancial = useCallback(async (id: string, data: Partial<FinancialEntry>) => {
     await FinancialDB.update(id, data); await refresh();
   }, [refresh]);
