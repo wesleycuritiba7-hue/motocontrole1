@@ -14,12 +14,13 @@
       },
       "distribution": "internal"
     },
-   "production": {
-  "autoIncrement": true,
-  "android": {
-    "credentialsSource": "local"
-  }
-},
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "credentialsSource": "local"
+      }
+    }
+  },
   "submit": {
     "production": {}
   }
