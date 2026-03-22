@@ -34,7 +34,7 @@ export interface MaintenanceForecast {
   id: string;
   item: string;
   unitCost: number;
-  kmDuration: number;
+  kmDuration: number; // KM para troca (ex: óleo a cada 3000km)
   createdAt: string;
 }
 
@@ -115,6 +115,17 @@ export interface Workshop {
   name: string;
   address?: string;
   phone?: string;
+  createdAt: string;
+}
+
+// ==================== WORK SHIFTS (HORAS TRABALHADAS) ====================
+
+export interface WorkShift {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
   createdAt: string;
 }
 
@@ -212,6 +223,9 @@ export interface AppConfig {
   maintenanceCategories: string[];
   appColors: Record<string, string>;
   reserveInWeeklyGoal: boolean;
+  weeklyGoalMode: "current" | "next";
+  currentMotoKm: number;
+  roloInitialBalance: number;
 }
 
 // ==================== STORAGE KEYS ====================
@@ -220,6 +234,7 @@ const KEYS = {
   ROLO_PRODUCTS: "@motocontrole:rolo_products",
   ROLO_SALES: "@motocontrole:rolo_sales",
   ROLO_WITHDRAWALS: "@motocontrole:rolo_withdrawals",
+  WORK_SHIFTS: "@motocontrole:work_shifts",
   MOTO_EARNINGS: "@motocontrole:moto_earnings",
   DAILY_KM: "@motocontrole:daily_km",
   MAINTENANCE: "@motocontrole:maintenance",
@@ -280,6 +295,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   ],
   appColors: {},
   reserveInWeeklyGoal: false,
+  weeklyGoalMode: "next",
+  currentMotoKm: 0,
+  roloInitialBalance: 0,
 };
 
 // ==================== GENERIC CRUD ====================
@@ -418,7 +436,6 @@ export const FinancialDB = {
     const items = await getAll<FinancialEntry>(KEYS.FINANCIAL_ENTRIES);
     await saveAll(KEYS.FINANCIAL_ENTRIES, items.filter((i) => i.id !== id));
   },
-  // AJUSTE 1 v6: Excluir todas as parcelas do mesmo grupo
   removeInstallmentGroup: async (id: string): Promise<void> => {
     const items = await getAll<FinancialEntry>(KEYS.FINANCIAL_ENTRIES);
     const target = items.find((i) => i.id === id);
@@ -426,7 +443,6 @@ export const FinancialDB = {
       await saveAll(KEYS.FINANCIAL_ENTRIES, items.filter((i) => i.id !== id));
       return;
     }
-    // Encontrar todas as parcelas do mesmo grupo (por installmentGroupId ou por descrição base)
     const groupId = target.installmentGroupId;
     const baseDesc = target.description.replace(/\s*\(\d+\/\d+\)\s*$/, "");
     const filtered = items.filter((i) => {
@@ -437,7 +453,6 @@ export const FinancialDB = {
     });
     await saveAll(KEYS.FINANCIAL_ENTRIES, filtered);
   },
-  // AJUSTE 1 v6: Excluir parcelas futuras a partir da selecionada (inclusive)
   removeInstallmentFuture: async (id: string): Promise<void> => {
     const items = await getAll<FinancialEntry>(KEYS.FINANCIAL_ENTRIES);
     const target = items.find((i) => i.id === id);
@@ -450,11 +465,9 @@ export const FinancialDB = {
     const targetDue = new Date(target.dueDate || target.date);
     const filtered = items.filter((i) => {
       if (i.id === id) return false;
-      // Verificar se é do mesmo grupo
       const sameGroup = (groupId && i.installmentGroupId === groupId) ||
         (i.isInstallment && i.description.replace(/\s*\(\d+\/\d+\)\s*$/, "") === baseDesc);
       if (!sameGroup) return true;
-      // Manter apenas parcelas anteriores à selecionada
       const iDue = new Date(i.dueDate || i.date);
       return iDue < targetDue;
     });
@@ -567,6 +580,24 @@ export const RoloProductDB = {
   getAll: () => getAll<RoloProduct>(KEYS.ROLO_PRODUCTS),
   add: async (item: Omit<RoloProduct, "id" | "createdAt">): Promise<RoloProduct> => {
     const items = await getAll<RoloProduct>(KEYS.ROLO_PRODUCTS);
+    const existingIndex = items.findIndex(
+      (p) => p.name.toLowerCase().trim() === item.name.toLowerCase().trim()
+    );
+    if (existingIndex >= 0) {
+      const existing = items[existingIndex];
+      const totalQty = existing.quantity + item.quantity;
+      const avgPrice =
+        (existing.purchasePrice * existing.quantity + item.purchasePrice * item.quantity) / totalQty;
+      items[existingIndex] = {
+        ...existing,
+        quantity: totalQty,
+        purchasePrice: avgPrice,
+        suggestedSalePrice: item.suggestedSalePrice || existing.suggestedSalePrice,
+        profitMargin: item.profitMargin || existing.profitMargin,
+      };
+      await saveAll(KEYS.ROLO_PRODUCTS, items);
+      return items[existingIndex];
+    }
     const newItem: RoloProduct = { ...item, id: generateId(), createdAt: new Date().toISOString() };
     items.push(newItem);
     await saveAll(KEYS.ROLO_PRODUCTS, items);
@@ -615,6 +646,27 @@ export const RoloWithdrawalDB = {
   },
 };
 
+// ==================== WORK SHIFTS ====================
+export const WorkShiftDB = {
+  getAll: () => getAll<WorkShift>(KEYS.WORK_SHIFTS),
+  add: async (item: Omit<WorkShift, "id" | "createdAt">): Promise<WorkShift> => {
+    const items = await getAll<WorkShift>(KEYS.WORK_SHIFTS);
+    const newItem: WorkShift = { ...item, id: generateId(), createdAt: new Date().toISOString() };
+    items.push(newItem);
+    await saveAll(KEYS.WORK_SHIFTS, items);
+    return newItem;
+  },
+  update: async (id: string, data: Partial<WorkShift>): Promise<void> => {
+    const items = await getAll<WorkShift>(KEYS.WORK_SHIFTS);
+    const index = items.findIndex((i) => i.id === id);
+    if (index >= 0) { items[index] = { ...items[index], ...data }; await saveAll(KEYS.WORK_SHIFTS, items); }
+  },
+  remove: async (id: string): Promise<void> => {
+    const items = await getAll<WorkShift>(KEYS.WORK_SHIFTS);
+    await saveAll(KEYS.WORK_SHIFTS, items.filter((i) => i.id !== id));
+  },
+};
+
 // ==================== CONFIG ====================
 export const ConfigDB = {
   get: async (): Promise<AppConfig> => {
@@ -632,15 +684,23 @@ export const ConfigDB = {
 // ==================== BACKUP / RESTORE / CLEAR ====================
 export const BackupDB = {
   exportAll: async (): Promise<string> => {
-    const [earnings, dailyKm, maintenance, forecasts, financials, monthlyBills, investments, extraIncome, walletTx, weeklyKm, roloProducts, roloSales, roloWithdrawals, config] =
+    const [earnings, dailyKm, maintenance, forecasts, financials, monthlyBills, investments, extraIncome, walletTx, weeklyKm, roloProducts, roloSales, roloWithdrawals, workShifts, config] =
       await Promise.all([
         MotoEarningsDB.getAll(), DailyKmDB.getAll(), MaintenanceDB.getAll(),
         MaintenanceForecastDB.getAll(), FinancialDB.getAll(), MonthlyBillsDB.getAll(),
         InvestmentDB.getAll(), ExtraIncomeDB.getAll(), WalletTransactionDB.getAll(),
         WeeklyKmCostDB.getAll(), RoloProductDB.getAll(), RoloSaleDB.getAll(),
-        RoloWithdrawalDB.getAll(), ConfigDB.get(),
+        RoloWithdrawalDB.getAll(), WorkShiftDB.getAll(), ConfigDB.get(),
       ]);
-    return JSON.stringify({ version: "1.2.0", exportDate: new Date().toISOString(), data: { earnings, dailyKm, maintenance, forecasts, financials, monthlyBills, investments, extraIncome, walletTransactions: walletTx, weeklyKmCosts: weeklyKm, roloProducts, roloSales, roloWithdrawals, config } }, null, 2);
+    return JSON.stringify({
+      version: "1.3.0",
+      exportDate: new Date().toISOString(),
+      data: {
+        earnings, dailyKm, maintenance, forecasts, financials, monthlyBills,
+        investments, extraIncome, walletTransactions: walletTx, weeklyKmCosts: weeklyKm,
+        roloProducts, roloSales, roloWithdrawals, workShifts, config,
+      },
+    }, null, 2);
   },
   importAll: async (jsonStr: string): Promise<boolean> => {
     try {
@@ -661,6 +721,7 @@ export const BackupDB = {
         d.roloProducts ? saveAll(KEYS.ROLO_PRODUCTS, d.roloProducts) : Promise.resolve(),
         d.roloSales ? saveAll(KEYS.ROLO_SALES, d.roloSales) : Promise.resolve(),
         d.roloWithdrawals ? saveAll(KEYS.ROLO_WITHDRAWALS, d.roloWithdrawals) : Promise.resolve(),
+        d.workShifts ? saveAll(KEYS.WORK_SHIFTS, d.workShifts) : Promise.resolve(),
         d.config ? AsyncStorage.setItem(KEYS.CONFIG, JSON.stringify(d.config)) : Promise.resolve(),
       ]);
       return true;
