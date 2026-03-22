@@ -19,7 +19,7 @@ import {
   type CostPeriod,
 } from "@/lib/calculations";
 
-type SubTab = "geral" | "ganhos" | "km" | "manutencao" | "media" | "previsao" | "config";
+type SubTab = "geral" | "ganhos" | "km" | "manutencao" | "media" | "previsao" | "horas" | "config";
 
 const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: "geral", label: "Geral" },
@@ -28,6 +28,7 @@ const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: "manutencao", label: "Manutenção" },
   { key: "media", label: "Média" },
   { key: "previsao", label: "Previsão" },
+  { key: "horas", label: "Horas" },
   { key: "config", label: "Config" },
 ];
 
@@ -60,6 +61,7 @@ export default function MotoScreen() {
       {activeTab === "manutencao" && <ManutencaoTab />}
       {activeTab === "media" && <MediaTab />}
       {activeTab === "previsao" && <PrevisaoTab />}
+      {activeTab === "horas" && <HorasTab />}
       {activeTab === "config" && <ConfigTab />}
     </ScreenContainer>
   );
@@ -67,9 +69,9 @@ export default function MotoScreen() {
 
 // ==================== GERAL ====================
 function GeralTab() {
-  const { earnings, dailyKms, maintenance, config } = useData();
+  const { earnings, dailyKms, maintenance, workShifts, config } = useData();
   const colors = useColors();
-  const [period, setPeriod] = useState<CostPeriod>("daily");
+  const [period, setPeriod] = useState<CostPeriod>("weekly");
   const [refDate, setRefDate] = useState(new Date());
   const [customStartStr, setCustomStartStr] = useState(todayFormatted());
   const [customEndStr, setCustomEndStr] = useState(todayFormatted());
@@ -92,13 +94,27 @@ function GeralTab() {
 
   const navLabel = period === "daily"
     ? formatDate(refDate.toISOString())
-    : period === "weekly"
-    ? formatWeekRange(refDate)
-    : period === "monthly"
-    ? formatMonthRange(refDate)
+    : period === "weekly" ? formatWeekRange(refDate)
+    : period === "monthly" ? formatMonthRange(refDate)
     : `${customStartStr} - ${customEndStr}`;
 
-  // Mesmo gráfico para todos os períodos: barras com Ganhos, Custo KM, Manutenção, Lucro
+  // Horas trabalhadas no período
+  const periodStart = period === "daily"
+    ? new Date(refDate.toISOString().split("T")[0] + "T00:00:00")
+    : period === "weekly" ? getStartOfWeek(refDate)
+    : period === "monthly" ? getStartOfMonth(refDate)
+    : customStart || new Date();
+  const periodEnd = period === "daily"
+    ? new Date(refDate.toISOString().split("T")[0] + "T23:59:59")
+    : period === "weekly" ? getEndOfWeek(refDate)
+    : period === "monthly" ? getEndOfMonth(refDate)
+    : customEnd || new Date();
+
+  const periodShifts = workShifts.filter((s) => isInRange(s.date, periodStart, periodEnd));
+  const totalMinutes = periodShifts.reduce((s, sh) => s + sh.durationMinutes, 0);
+  const totalHours = totalMinutes / 60;
+  const reaisPerHora = totalHours > 0 ? data.totalEarnings / totalHours : 0;
+
   const chartLabels = ["Ganhos", "Custo KM", "Manutenção", "Lucro"];
   const chartData = [
     data.totalEarnings,
@@ -161,14 +177,24 @@ function GeralTab() {
           <StatCard title="Manutenção" value={formatCurrency(data.maintenanceCost)}
             icon={<IconSymbol name="wrench.fill" size={16} color={colors.error} />} />
         </View>
-        <View className="flex-row gap-3 mb-4">
+        <View className="flex-row gap-3 mb-3">
           <StatCard title="Lucro Líquido" value={formatCurrency(data.netProfit)}
             icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={data.netProfit >= 0 ? colors.success : colors.error} />} />
           <StatCard title="R$/KM" value={formatCurrency(data.avgPerKm)}
             icon={<IconSymbol name="gauge.medium" size={16} color={colors.muted} />} />
         </View>
 
-        {/* Gráfico padronizado para todos os períodos - SEM showTotal */}
+        {/* Card de Horas Trabalhadas */}
+        {totalHours > 0 && (
+          <View className="flex-row gap-3 mb-3">
+            <StatCard title="Horas Trabalhadas" value={`${totalHours.toFixed(1)}h`}
+              icon={<IconSymbol name="clock.fill" size={16} color={colors.primary} />} />
+            <StatCard title="R$/Hora" value={formatCurrency(reaisPerHora)}
+              icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={colors.success} />} />
+          </View>
+        )}
+
+        {/* Gráfico padronizado — sem total */}
         <Card title={`Gráfico ${period === "daily" ? "Diário" : period === "weekly" ? "Semanal" : period === "monthly" ? "Mensal" : "Personalizado"}`} className="mb-4">
           <SimpleBarChart
             labels={chartLabels}
@@ -222,47 +248,30 @@ function GanhosTab() {
       const paymentConfigs = config.appPaymentConfigs || [];
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-
       for (const earning of earnings) {
         if (earning.status !== "pending") continue;
         const appConfig = paymentConfigs.find((p) => p.appName === earning.appName);
         if (!appConfig) continue;
-
         if (appConfig.paymentMode === "instant") {
-          await updateEarning(earning.id, {
-            status: "received",
-            receivedValue: earning.value,
-            receivedDate: earning.date,
-          });
+          await updateEarning(earning.id, { status: "received", receivedValue: earning.value, receivedDate: earning.date });
           continue;
         }
-
         if (appConfig.paymentMode === "next_day") {
           const earningDate = new Date(earning.date + "T12:00:00");
           const nextDay = new Date(earningDate);
           nextDay.setDate(nextDay.getDate() + 1);
           nextDay.setHours(0, 0, 0, 0);
           if (today >= nextDay) {
-            await updateEarning(earning.id, {
-              status: "received",
-              receivedValue: earning.value,
-              receivedDate: nextDay.toISOString().split("T")[0],
-            });
+            await updateEarning(earning.id, { status: "received", receivedValue: earning.value, receivedDate: nextDay.toISOString().split("T")[0] });
           }
           continue;
         }
-
         const earningDate = new Date(earning.date + "T12:00:00");
         const weekEnd = getEndOfWeek(earningDate);
         const payDate = getPaymentDate(weekEnd, appConfig.paymentMode);
         if (!payDate) continue;
-
         if (today >= payDate) {
-          await updateEarning(earning.id, {
-            status: "received",
-            receivedValue: earning.value,
-            receivedDate: payDate.toISOString().split("T")[0],
-          });
+          await updateEarning(earning.id, { status: "received", receivedValue: earning.value, receivedDate: payDate.toISOString().split("T")[0] });
         }
       }
     };
@@ -272,6 +281,10 @@ function GanhosTab() {
   const navLabel = period === "week" ? formatWeekRange(refDate) : formatMonthRange(refDate);
   const handlePrev = () => setRefDate(period === "week" ? shiftWeek(refDate, -1) : shiftMonth(refDate, -1));
   const handleNext = () => setRefDate(period === "week" ? shiftWeek(refDate, 1) : shiftMonth(refDate, 1));
+
+  // Cores dos apps vindo das configs
+  const appColors = config.appColors || {};
+  const getColor = (app: string) => appColors[app] || getAppColor(app);
 
   const byApp: Record<string, number> = {};
   filtered.forEach((e) => { byApp[e.appName] = (byApp[e.appName] || 0) + e.value; });
@@ -314,22 +327,23 @@ function GanhosTab() {
             <SimpleBarChart
               labels={Object.keys(byApp)}
               data={Object.values(byApp)}
-              barColors={Object.keys(byApp).map((a) => getAppColor(a))}
-              showValues showTotal height={140}
+              barColors={Object.keys(byApp).map((a) => getColor(a))}
+              showValues height={140}
             />
           </Card>
         )}
 
         {period === "week" && weeklyByApp && weeklyByApp.datasets.length > 0 && (
-          <Card title="Ganhos Diários por App" className="mb-4">
+          <Card title="Ganhos Diários por App (R$)" className="mb-4">
             <GroupedBarChart
               labels={weeklyByApp.labels}
               datasets={weeklyByApp.datasets.map((ds) => ({
                 data: ds.data,
-                color: ds.color,
+                color: getColor(ds.appName),
                 label: ds.appName,
               }))}
-              height={200} width={340} showValues showTotal
+              height={200} width={340} showValues
+              formatValue={(v) => `R$${v.toFixed(0)}`}
             />
           </Card>
         )}
@@ -342,8 +356,8 @@ function GanhosTab() {
             <TouchableOpacity key={app} onPress={() => setAppName(app)}
               style={{
                 paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, marginRight: 8,
-                backgroundColor: appName === app ? (getAppColor(app)) : colors.surface,
-                borderWidth: 1, borderColor: appName === app ? getAppColor(app) : colors.border,
+                backgroundColor: appName === app ? getColor(app) : colors.surface,
+                borderWidth: 1, borderColor: appName === app ? getColor(app) : colors.border,
               }}>
               <Text style={{ color: appName === app ? "#fff" : colors.foreground, fontWeight: "600", fontSize: 12 }}>
                 {app}
@@ -378,14 +392,13 @@ function GanhosTab() {
             <View className="flex-row items-center justify-between">
               <View className="flex-1">
                 <View className="flex-row items-center">
-                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getAppColor(e.appName), marginRight: 6 }} />
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getColor(e.appName), marginRight: 6 }} />
                   <Text className="text-sm font-semibold text-foreground">{e.appName}</Text>
                 </View>
                 <Text className="text-xs text-muted mt-0.5">
                   {formatDate(e.date)} •{" "}
                   <Text style={{ color: e.status === "received" ? colors.success : (e.receivedValue && e.receivedValue > 0) ? colors.warning : colors.muted }}>
-                    {e.status === "received"
-                      ? "Recebido"
+                    {e.status === "received" ? "Recebido"
                       : (e.receivedValue && e.receivedValue > 0)
                         ? `Parcial (${formatCurrency(e.receivedValue)} de ${formatCurrency(e.value)})`
                         : "Pendente"}
@@ -404,14 +417,14 @@ function GanhosTab() {
         ))}
         {sorted.length === 0 && <Text className="text-sm text-muted text-center py-4">Nenhum ganho no período</Text>}
 
-        <BaixaManualSection earnings={filtered} updateEarning={updateEarning} addEarning={addEarning} config={config} colors={colors} />
+        <BaixaManualSection earnings={filtered} updateEarning={updateEarning} addEarning={addEarning} config={config} colors={colors} getColor={getColor} />
       </View>
     </ScrollView>
   );
 }
 
 // ==================== BAIXA MANUAL ====================
-function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, config, colors }: any) {
+function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, config, colors, getColor }: any) {
   const [selectedApp, setSelectedApp] = useState(config.apps[0] || "");
   const [receiveValue, setReceiveValue] = useState("");
 
@@ -433,43 +446,30 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
     }
     const parsedValue = parseFloat(receiveValue.replace(",", "."));
     if (parsedValue <= 0) return;
-
     const appPending = pendingByApp[selectedApp];
     if (!appPending || appPending.total <= 0) {
       if (Platform.OS === "web") alert("Nenhum valor pendente para este app");
       else Alert.alert("Aviso", "Nenhum valor pendente para este app");
       return;
     }
-
     let remaining = parsedValue;
     const pendingEarnings = filtered
       .filter((e: any) => e.appName === selectedApp && e.status !== "received")
       .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
     const todayStr2 = new Date().toISOString().split("T")[0];
     for (const earning of pendingEarnings) {
       if (remaining <= 0) break;
       const alreadyReceived = earning.receivedValue || 0;
       const stillPending = earning.value - alreadyReceived;
       if (stillPending <= 0) continue;
-
       if (remaining >= stillPending) {
-        await updateEarning(earning.id, {
-          status: "received",
-          receivedValue: earning.value,
-          receivedDate: todayStr2,
-        });
+        await updateEarning(earning.id, { status: "received", receivedValue: earning.value, receivedDate: todayStr2 });
         remaining -= stillPending;
       } else {
-        await updateEarning(earning.id, {
-          status: "pending",
-          receivedValue: alreadyReceived + remaining,
-          receivedDate: todayStr2,
-        });
+        await updateEarning(earning.id, { status: "pending", receivedValue: alreadyReceived + remaining, receivedDate: todayStr2 });
         remaining = 0;
       }
     }
-
     setReceiveValue("");
     if (Platform.OS === "web") alert(`Baixa de ${formatCurrency(parsedValue)} no ${selectedApp} realizada!`);
     else Alert.alert("Sucesso", `Baixa de ${formatCurrency(parsedValue)} no ${selectedApp} realizada!`);
@@ -477,17 +477,14 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
 
   return (
     <Card title="Baixa Manual de Recebimentos" className="mt-4 mb-4">
-      <Text className="text-xs text-muted mb-3">
-        Selecione o aplicativo e informe o valor recebido para dar baixa manual.
-      </Text>
-
+      <Text className="text-xs text-muted mb-3">Selecione o aplicativo e informe o valor recebido para dar baixa manual.</Text>
       {Object.keys(pendingByApp).length > 0 && (
         <View className="mb-3">
           <Text className="text-xs font-semibold text-muted mb-2 uppercase">Pendente por App</Text>
           {Object.entries(pendingByApp).map(([app, data]: [string, any]) => (
             <View key={app} className="flex-row justify-between items-center py-1.5 border-b border-border/50">
               <View className="flex-row items-center">
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: getAppColor(app), marginRight: 6 }} />
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: getColor(app), marginRight: 6 }} />
                 <Text className="text-sm text-foreground">{app}</Text>
               </View>
               <Text className="text-sm font-bold" style={{ color: colors.warning }}>{formatCurrency(data.total)}</Text>
@@ -495,28 +492,23 @@ function BaixaManualSection({ earnings: filtered, updateEarning, addEarning, con
           ))}
         </View>
       )}
-
       <Text className="text-xs text-muted mb-1 uppercase">Aplicativo</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
         {config.apps.map((app: string) => (
           <TouchableOpacity key={app} onPress={() => setSelectedApp(app)}
             style={{
               paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, marginRight: 8,
-              backgroundColor: selectedApp === app ? getAppColor(app) : colors.surface,
-              borderWidth: 1, borderColor: selectedApp === app ? getAppColor(app) : colors.border,
+              backgroundColor: selectedApp === app ? getColor(app) : colors.surface,
+              borderWidth: 1, borderColor: selectedApp === app ? getColor(app) : colors.border,
             }}>
-            <Text style={{ color: selectedApp === app ? "#fff" : colors.foreground, fontWeight: "600", fontSize: 12 }}>
-              {app}
-            </Text>
+            <Text style={{ color: selectedApp === app ? "#fff" : colors.foreground, fontWeight: "600", fontSize: 12 }}>{app}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
-
       <Text className="text-xs text-muted mb-1 uppercase">Valor Recebido (R$)</Text>
       <TextInput className="bg-background border border-border rounded-xl px-4 py-3 text-foreground mb-3"
         placeholder="0,00" placeholderTextColor={colors.muted} keyboardType="decimal-pad"
         value={receiveValue} onChangeText={setReceiveValue} returnKeyType="done" />
-
       <TouchableOpacity onPress={handleBaixaManual}
         style={{ backgroundColor: colors.success, borderRadius: 12, paddingVertical: 12, alignItems: "center" }}>
         <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Dar Baixa Manual</Text>
@@ -550,23 +542,16 @@ function KmTab() {
         await addWeeklyKmCost({
           weekStart: start.toISOString().split("T")[0],
           weekEnd: end.toISOString().split("T")[0],
-          totalKm: totalWeekKm,
-          costPerKm: config.costPerKm,
-          totalCost: weekCost,
-          status: "closed",
+          totalKm: totalWeekKm, costPerKm: config.costPerKm,
+          totalCost: weekCost, status: "closed",
         });
         const nextWednesday = getPaymentDate(end, "wednesday");
         const dueDate = nextWednesday ? nextWednesday.toISOString().split("T")[0] : end.toISOString().split("T")[0];
         await addFinancial({
-          type: "expense",
-          category: "Combustível",
+          type: "expense", category: "Combustível",
           description: `Custo KM Semana ${formatDate(start.toISOString())} - ${formatDate(end.toISOString())}`,
-          value: weekCost,
-          date: end.toISOString().split("T")[0],
-          dueDate: dueDate,
-          isPaid: false,
-          isFixed: false,
-          isInstallment: false,
+          value: weekCost, date: end.toISOString().split("T")[0], dueDate,
+          isPaid: false, isFixed: false, isInstallment: false,
         });
       }
     };
@@ -587,23 +572,16 @@ function KmTab() {
     await addWeeklyKmCost({
       weekStart: start.toISOString().split("T")[0],
       weekEnd: end.toISOString().split("T")[0],
-      totalKm: totalWeekKm,
-      costPerKm: config.costPerKm,
-      totalCost: weekCost,
-      status: "closed",
+      totalKm: totalWeekKm, costPerKm: config.costPerKm,
+      totalCost: weekCost, status: "closed",
     });
     const nextWednesday = getPaymentDate(end, "wednesday");
     const dueDate = nextWednesday ? nextWednesday.toISOString().split("T")[0] : end.toISOString().split("T")[0];
     await addFinancial({
-      type: "expense",
-      category: "Combustível",
+      type: "expense", category: "Combustível",
       description: `Custo KM Semana ${formatDate(start.toISOString())} - ${formatDate(end.toISOString())}`,
-      value: weekCost,
-      date: end.toISOString().split("T")[0],
-      dueDate: dueDate,
-      isPaid: false,
-      isFixed: false,
-      isInstallment: false,
+      value: weekCost, date: end.toISOString().split("T")[0], dueDate,
+      isPaid: false, isFixed: false, isInstallment: false,
     });
     if (Platform.OS === "web") alert(`Custo KM de ${formatCurrency(weekCost)} lançado!`);
     else Alert.alert("Sucesso", `Custo KM de ${formatCurrency(weekCost)} lançado!`);
@@ -622,16 +600,13 @@ function KmTab() {
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-3">KM Rodado</Text>
-
         <DateNavigator label={formatWeekRange(refDate)}
           onPrev={() => setRefDate(shiftWeek(refDate, -1))}
           onNext={() => setRefDate(shiftWeek(refDate, 1))} />
-
         <View className="flex-row gap-3 mb-3">
           <StatCard title="KM da Semana" value={`${totalWeekKm.toFixed(0)} km`} />
           <StatCard title="Custo KM" value={formatCurrency(weekCost)} />
         </View>
-
         <View className="bg-surface border rounded-xl p-3 mb-4" style={{ borderColor: existingWeeklyCost ? colors.success : colors.warning }}>
           <Text className="text-sm font-semibold" style={{ color: existingWeeklyCost ? colors.success : colors.warning }}>
             {existingWeeklyCost ? "Semana Fechada" : isWeekClosed(refDate) && totalWeekKm > 0 ? "Fechamento Automático" : "Semana Aberta"}
@@ -651,8 +626,16 @@ function KmTab() {
           )}
         </View>
 
+        {/* Gráfico KM em números, não em R$ */}
         <Card title="KM por Dia" className="mb-4">
-          <SimpleBarChart labels={days} data={kmPerDay} color="#4ADE80" showValues showTotal height={120} />
+          <SimpleBarChart
+            labels={days}
+            data={kmPerDay}
+            color="#4ADE80"
+            showValues
+            height={120}
+            formatValue={(v) => `${v.toFixed(0)}`}
+          />
         </Card>
 
         <Text className="text-base font-bold text-foreground mb-3">Registrar KM</Text>
@@ -706,7 +689,6 @@ function ManutencaoTab() {
   const [date, setDate] = useState(todayFormatted());
   const [viewMode, setViewMode] = useState<"year" | "month">("year");
   const [refDate, setRefDate] = useState(new Date());
-
   const workshops = config.workshops || [];
 
   const handleSave = async () => {
@@ -730,20 +712,17 @@ function ManutencaoTab() {
     if (d.getFullYear() === year) annualData[d.getMonth()] += m.value;
   });
   const totalAnual = annualData.reduce((s, v) => s + v, 0);
-
   const monthStart = getStartOfMonth(refDate);
   const monthEnd = getEndOfMonth(refDate);
   const monthMaint = maintenance.filter((m) => isInRange(m.date, monthStart, monthEnd));
   const byItem: Record<string, number> = {};
   monthMaint.forEach((m) => { byItem[m.item] = (byItem[m.item] || 0) + m.value; });
-
   const sorted = [...maintenance].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 20);
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-3">Manutenção</Text>
-
         <View className="flex-row gap-2 mb-3">
           {(["year", "month"] as const).map((m) => (
             <TouchableOpacity key={m} onPress={() => setViewMode(m)}
@@ -765,8 +744,16 @@ function ManutencaoTab() {
               onPrev={() => setRefDate(new Date(year - 1, refDate.getMonth()))}
               onNext={() => setRefDate(new Date(year + 1, refDate.getMonth()))} />
             <StatCard title="Total Anual" value={formatCurrency(totalAnual)} />
+            {/* Gráfico sem R$ nos labels das barras */}
             <Card title="Gastos com Manutenção por Mês" className="mt-3 mb-4">
-              <SimpleBarChart labels={monthNames} data={annualData} color="#F87171" showValues showTotal height={160} />
+              <SimpleBarChart
+                labels={monthNames}
+                data={annualData}
+                color="#F87171"
+                showValues
+                height={160}
+                formatValue={(v) => v > 0 ? formatCurrency(v) : ""}
+              />
             </Card>
           </>
         ) : (
@@ -777,16 +764,18 @@ function ManutencaoTab() {
             <StatCard title="Total do Mês" value={formatCurrency(monthMaint.reduce((s, m) => s + m.value, 0))} />
             {Object.keys(byItem).length > 0 && (
               <Card title="Por Item" className="mt-3 mb-4">
-                <SimpleBarChart labels={Object.keys(byItem)} data={Object.values(byItem)}
+                <SimpleBarChart
+                  labels={Object.keys(byItem)}
+                  data={Object.values(byItem)}
                   barColors={["#F87171", "#EF4444", "#DC2626", "#FF6B6B", "#FF8A65"]}
-                  showValues showTotal height={140} />
+                  showValues height={140}
+                />
               </Card>
             )}
           </>
         )}
 
         <Text className="text-base font-bold text-foreground mt-2 mb-3">Novo Registro</Text>
-
         <Text className="text-xs text-muted mb-1 uppercase">Item</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
           {maintenanceCats.map((mi: string) => (
@@ -847,7 +836,8 @@ function ManutencaoTab() {
             <Text className="text-xs text-muted mb-1 uppercase">Local</Text>
             <TextInput className="bg-surface border border-border rounded-xl px-4 py-3 text-foreground"
               placeholder="Oficina" placeholderTextColor={colors.muted}
-              value={selectedWorkshop || location} onChangeText={(t) => { setLocation(t); setSelectedWorkshop(""); }} returnKeyType="done" />
+              value={selectedWorkshop || location}
+              onChangeText={(t) => { setLocation(t); setSelectedWorkshop(""); }} returnKeyType="done" />
           </View>
           <View className="flex-1">
             <Text className="text-xs text-muted mb-1 uppercase">Data</Text>
@@ -910,7 +900,6 @@ function MediaTab() {
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-3">Média</Text>
-
         <View className="flex-row gap-2 mb-3">
           {(["weekly", "monthly"] as const).map((mode) => (
             <TouchableOpacity key={mode} onPress={() => { setFilterMode(mode); setRefDate(new Date()); }}
@@ -925,45 +914,33 @@ function MediaTab() {
             </TouchableOpacity>
           ))}
         </View>
-
         <DateNavigator label={navLabel} onPrev={handlePrev} onNext={handleNext} />
-
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="Média/Dia" value={formatCurrency(avgPerDay)}
-            icon={<IconSymbol name="chart.bar.fill" size={16} color={colors.success} />} />
-          <StatCard title="Média/KM" value={formatCurrency(avgPerKm)}
-            icon={<IconSymbol name="speedometer" size={16} color={colors.primary} />} />
+          <StatCard title="Média/Dia" value={formatCurrency(avgPerDay)} icon={<IconSymbol name="chart.bar.fill" size={16} color={colors.success} />} />
+          <StatCard title="Média/KM" value={formatCurrency(avgPerKm)} icon={<IconSymbol name="speedometer" size={16} color={colors.primary} />} />
         </View>
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="KM/Dia" value={`${avgKmPerDay.toFixed(1)} km`}
-            icon={<IconSymbol name="location.fill" size={16} color={colors.warning} />} />
-          <StatCard title="Dias Trabalhados" value={daysWorked.toString()}
-            icon={<IconSymbol name="calendar" size={16} color={colors.muted} />} />
+          <StatCard title="KM/Dia" value={`${avgKmPerDay.toFixed(1)} km`} icon={<IconSymbol name="location.fill" size={16} color={colors.warning} />} />
+          <StatCard title="Dias Trabalhados" value={daysWorked.toString()} icon={<IconSymbol name="calendar" size={16} color={colors.muted} />} />
         </View>
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="Total Ganhos" value={formatCurrency(totalEarnings)}
-            icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={colors.success} />} />
-          <StatCard title="Total KM" value={`${totalKm.toFixed(0)} km`}
-            icon={<IconSymbol name="speedometer" size={16} color={colors.primary} />} />
+          <StatCard title="Total Ganhos" value={formatCurrency(totalEarnings)} icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={colors.success} />} />
+          <StatCard title="Total KM" value={`${totalKm.toFixed(0)} km`} icon={<IconSymbol name="speedometer" size={16} color={colors.primary} />} />
         </View>
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="Custo KM Total" value={formatCurrency(costPerKmTotal)}
-            icon={<IconSymbol name="fuelpump.fill" size={16} color={colors.error} />} />
-          <StatCard title="Custo/Dia" value={formatCurrency(avgCostPerDay)}
-            icon={<IconSymbol name="clock.fill" size={16} color={colors.warning} />} />
+          <StatCard title="Custo KM Total" value={formatCurrency(costPerKmTotal)} icon={<IconSymbol name="fuelpump.fill" size={16} color={colors.error} />} />
+          <StatCard title="Custo/Dia" value={formatCurrency(avgCostPerDay)} icon={<IconSymbol name="clock.fill" size={16} color={colors.warning} />} />
         </View>
         <View className="flex-row gap-3 mb-4">
-          <StatCard title="Lucro Líquido" value={formatCurrency(netProfit)}
-            icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={netProfit >= 0 ? colors.success : colors.error} />} />
+          <StatCard title="Lucro Líquido" value={formatCurrency(netProfit)} icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={netProfit >= 0 ? colors.success : colors.error} />} />
           <View className="flex-1" />
         </View>
-
         <Card title="Ganhos vs Custo KM" className="mb-4">
           <SimpleBarChart
             labels={["Ganhos", "Custo KM", "Lucro"]}
             data={[totalEarnings, costPerKmTotal, Math.max(0, netProfit)]}
             barColors={["#4ADE80", "#F87171", "#60A5FA"]}
-            height={120} showValues showTotal
+            height={120} showValues
           />
         </Card>
       </View>
@@ -1036,24 +1013,17 @@ function PrevisaoTab() {
     <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
       <View className="px-5 pt-2">
         <Text className="text-lg font-bold text-foreground mb-4">Previsão</Text>
-
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="Lucro Bruto (Mês)" value={formatCurrency(lucroBrutoMensal)}
-            icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
-          <StatCard title="Gasto KM (Mês)" value={formatCurrency(gastoKmMensal)}
-            icon={<IconSymbol name="fuelpump.fill" size={16} color={colors.warning} />} />
+          <StatCard title="Lucro Bruto (Mês)" value={formatCurrency(lucroBrutoMensal)} icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
+          <StatCard title="Gasto KM (Mês)" value={formatCurrency(gastoKmMensal)} icon={<IconSymbol name="fuelpump.fill" size={16} color={colors.warning} />} />
         </View>
         <View className="flex-row gap-3 mb-3">
-          <StatCard title="Lucro Líquido (Mês)" value={formatCurrency(lucroLiquidoMensal)}
-            icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={lucroLiquidoMensal >= 0 ? colors.success : colors.error} />} />
-          <StatCard title="Custo Real/KM" value={formatCurrency(result.realCostPerKm)}
-            icon={<IconSymbol name="gauge.medium" size={16} color={colors.muted} />} />
+          <StatCard title="Lucro Líquido (Mês)" value={formatCurrency(lucroLiquidoMensal)} icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={lucroLiquidoMensal >= 0 ? colors.success : colors.error} />} />
+          <StatCard title="Custo Real/KM" value={formatCurrency(result.realCostPerKm)} icon={<IconSymbol name="gauge.medium" size={16} color={colors.muted} />} />
         </View>
         <View className="flex-row gap-3 mb-4">
-          <StatCard title="Lucro Bruto (Ano)" value={formatCurrency(lucroBrutoAnual)}
-            icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
-          <StatCard title="Lucro Líquido (Ano)" value={formatCurrency(lucroLiquidoAnual)}
-            icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={lucroLiquidoAnual >= 0 ? colors.success : colors.error} />} />
+          <StatCard title="Lucro Bruto (Ano)" value={formatCurrency(lucroBrutoAnual)} icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
+          <StatCard title="Lucro Líquido (Ano)" value={formatCurrency(lucroLiquidoAnual)} icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={lucroLiquidoAnual >= 0 ? colors.success : colors.error} />} />
         </View>
 
         <Card title="Configuração" className="mb-4">
@@ -1079,37 +1049,21 @@ function PrevisaoTab() {
         </Card>
 
         <Card title="Projeção de KM" className="mb-4">
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">KM/Dia</Text>
-            <Text className="text-sm font-bold text-foreground">{result.kmPerDay.toFixed(1)} km</Text>
-          </View>
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">KM/Semana</Text>
-            <Text className="text-sm font-bold text-foreground">{result.kmPerWeek.toFixed(1)} km</Text>
-          </View>
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">KM/Mês</Text>
-            <Text className="text-sm font-bold text-foreground">{result.kmPerMonth.toFixed(0)} km</Text>
-          </View>
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">KM/Ano</Text>
-            <Text className="text-sm font-bold text-foreground">{result.kmPerYear.toFixed(0)} km</Text>
-          </View>
+          {[["KM/Dia", `${result.kmPerDay.toFixed(1)} km`], ["KM/Semana", `${result.kmPerWeek.toFixed(1)} km`], ["KM/Mês", `${result.kmPerMonth.toFixed(0)} km`], ["KM/Ano", `${result.kmPerYear.toFixed(0)} km`]].map(([label, val]) => (
+            <View key={label} className="flex-row justify-between items-center py-2">
+              <Text className="text-sm text-muted">{label}</Text>
+              <Text className="text-sm font-bold text-foreground">{val}</Text>
+            </View>
+          ))}
         </Card>
 
         <Card title="Projeção de Ganhos" className="mb-4">
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">Semanal</Text>
-            <Text className="text-sm font-bold" style={{ color: colors.success }}>{formatCurrency(result.earningWeekly)}</Text>
-          </View>
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">Mensal</Text>
-            <Text className="text-sm font-bold" style={{ color: colors.success }}>{formatCurrency(result.earningMonthly)}</Text>
-          </View>
-          <View className="flex-row justify-between items-center py-2">
-            <Text className="text-sm text-muted">Anual</Text>
-            <Text className="text-sm font-bold" style={{ color: colors.success }}>{formatCurrency(result.earningAnnual)}</Text>
-          </View>
+          {[["Semanal", result.earningWeekly], ["Mensal", result.earningMonthly], ["Anual", result.earningAnnual]].map(([label, val]) => (
+            <View key={label as string} className="flex-row justify-between items-center py-2">
+              <Text className="text-sm text-muted">{label as string}</Text>
+              <Text className="text-sm font-bold" style={{ color: colors.success }}>{formatCurrency(val as number)}</Text>
+            </View>
+          ))}
         </Card>
 
         <Card title="Projeção de Gastos" className="mb-4">
@@ -1121,18 +1075,12 @@ function PrevisaoTab() {
             </View>
           ))}
           <View className="mt-3 pt-2 border-t border-border">
-            <View className="flex-row justify-between items-center py-1.5">
-              <Text className="text-sm font-semibold text-foreground">Gasto Anual Total</Text>
-              <Text className="text-sm font-bold" style={{ color: colors.error }}>{formatCurrency(result.totalAnnualCost)}</Text>
-            </View>
-            <View className="flex-row justify-between items-center py-1.5">
-              <Text className="text-sm font-semibold text-foreground">Gasto Mensal</Text>
-              <Text className="text-sm font-bold" style={{ color: colors.error }}>{formatCurrency(result.totalMonthlyCost)}</Text>
-            </View>
-            <View className="flex-row justify-between items-center py-1.5">
-              <Text className="text-sm font-semibold text-foreground">Custo Real/KM</Text>
-              <Text className="text-sm font-bold" style={{ color: colors.warning }}>{formatCurrency(result.realCostPerKm)}</Text>
-            </View>
+            {[["Gasto Anual Total", result.totalAnnualCost, colors.error], ["Gasto Mensal", result.totalMonthlyCost, colors.error], ["Custo Real/KM", result.realCostPerKm, colors.warning]].map(([label, val, color]) => (
+              <View key={label as string} className="flex-row justify-between items-center py-1.5">
+                <Text className="text-sm font-semibold text-foreground">{label as string}</Text>
+                <Text className="text-sm font-bold" style={{ color: color as string }}>{formatCurrency(val as number)}</Text>
+              </View>
+            ))}
           </View>
         </Card>
 
@@ -1165,7 +1113,7 @@ function PrevisaoTab() {
           <View key={f.id} className="flex-row items-center bg-surface border border-border rounded-xl p-3 mb-2">
             <View className="flex-1">
               <Text className="text-sm font-semibold text-foreground">{f.item}</Text>
-              <Text className="text-xs text-muted">{formatCurrency(f.unitCost)} • {f.kmDuration} km</Text>
+              <Text className="text-xs text-muted">{formatCurrency(f.unitCost)} • troca a cada {f.kmDuration.toLocaleString()} km</Text>
             </View>
             <TouchableOpacity onPress={() => removeForecast(f.id)} style={{ padding: 4 }}>
               <IconSymbol name="trash.fill" size={16} color={colors.error} />
@@ -1177,12 +1125,200 @@ function PrevisaoTab() {
   );
 }
 
+// ==================== HORAS ====================
+function HorasTab() {
+  const { workShifts, addWorkShift, removeWorkShift, earnings } = useData();
+  const colors = useColors();
+  const [date, setDate] = useState(todayFormatted());
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [refDate, setRefDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<"week" | "month">("week");
+
+  const periodStart = viewMode === "week" ? getStartOfWeek(refDate) : getStartOfMonth(refDate);
+  const periodEnd = viewMode === "week" ? getEndOfWeek(refDate) : getEndOfMonth(refDate);
+
+  const periodShifts = workShifts.filter((s) => isInRange(s.date, periodStart, periodEnd));
+  const totalMinutes = periodShifts.reduce((s, sh) => s + sh.durationMinutes, 0);
+  const totalHours = totalMinutes / 60;
+
+  const periodEarnings = earnings.filter((e) => isInRange(e.date, periodStart, periodEnd));
+  const totalEarnings = periodEarnings.reduce((s, e) => s + e.value, 0);
+  const reaisPerHora = totalHours > 0 ? totalEarnings / totalHours : 0;
+
+  const navLabel = viewMode === "week" ? formatWeekRange(refDate) : formatMonthRange(refDate);
+  const handlePrev = () => setRefDate(viewMode === "week" ? shiftWeek(refDate, -1) : shiftMonth(refDate, -1));
+  const handleNext = () => setRefDate(viewMode === "week" ? shiftWeek(refDate, 1) : shiftMonth(refDate, 1));
+
+  const calcDuration = (start: string, end: string): number => {
+    const [sh, sm] = start.split(":").map(Number);
+    const [eh, em] = end.split(":").map(Number);
+    if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return 0;
+    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    if (mins < 0) mins += 24 * 60; // turno que passa meia-noite
+    return mins;
+  };
+
+  const handleSave = async () => {
+    if (!startTime || !endTime) {
+      if (Platform.OS === "web") alert("Preencha horário de saída e chegada");
+      else Alert.alert("Atenção", "Preencha horário de saída e chegada");
+      return;
+    }
+    const duration = calcDuration(startTime, endTime);
+    if (duration <= 0) {
+      if (Platform.OS === "web") alert("Horário inválido");
+      else Alert.alert("Atenção", "Horário inválido");
+      return;
+    }
+    await addWorkShift({
+      date: parseDateInput(date),
+      startTime,
+      endTime,
+      durationMinutes: duration,
+    });
+    setStartTime("");
+    setEndTime("");
+    if (Platform.OS === "web") alert("Turno registrado!");
+    else Alert.alert("Sucesso", "Turno registrado!");
+  };
+
+  // Agrupa turnos por dia
+  const shiftsByDay = useMemo(() => {
+    const map: Record<string, typeof workShifts> = {};
+    periodShifts.forEach((s) => {
+      if (!map[s.date]) map[s.date] = [];
+      map[s.date].push(s);
+    });
+    return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
+  }, [periodShifts]);
+
+  return (
+    <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+      <View className="px-5 pt-2">
+        <Text className="text-lg font-bold text-foreground mb-3">Horas Trabalhadas</Text>
+
+        <View className="flex-row gap-2 mb-3">
+          {(["week", "month"] as const).map((mode) => (
+            <TouchableOpacity key={mode} onPress={() => { setViewMode(mode); setRefDate(new Date()); }}
+              style={{
+                flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: "center",
+                backgroundColor: viewMode === mode ? colors.primary : colors.surface,
+                borderWidth: 1, borderColor: viewMode === mode ? colors.primary : colors.border,
+              }}>
+              <Text style={{ color: viewMode === mode ? "#fff" : colors.foreground, fontWeight: "600", fontSize: 13 }}>
+                {mode === "week" ? "Semana" : "Mês"}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <DateNavigator label={navLabel} onPrev={handlePrev} onNext={handleNext} />
+
+        <View className="flex-row gap-3 mb-3">
+          <StatCard title="Horas Trabalhadas" value={`${totalHours.toFixed(1)}h`}
+            icon={<IconSymbol name="clock.fill" size={16} color={colors.primary} />} />
+          <StatCard title="R$/Hora" value={reaisPerHora > 0 ? formatCurrency(reaisPerHora) : "-"}
+            icon={<IconSymbol name="dollarsign.circle.fill" size={16} color={colors.success} />} />
+        </View>
+        <View className="flex-row gap-3 mb-4">
+          <StatCard title="Faturamento" value={formatCurrency(totalEarnings)}
+            icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={16} color={colors.success} />} />
+          <StatCard title="Turnos" value={periodShifts.length.toString()}
+            icon={<IconSymbol name="list.bullet" size={16} color={colors.muted} />} />
+        </View>
+
+        {/* Formulário de novo turno */}
+        <Card title="Registrar Turno" className="mb-4">
+          <Text className="text-xs text-muted mb-3">
+            Registre cada vez que você sai para trabalhar. Pode ter vários turnos no mesmo dia.
+          </Text>
+          <Text className="text-xs text-muted mb-1 uppercase">Data</Text>
+          <TextInput className="bg-background border border-border rounded-xl px-4 py-3 text-foreground mb-3"
+            placeholder="DD/MM/AA" placeholderTextColor={colors.muted}
+            value={date} onChangeText={setDate} returnKeyType="done" />
+          <View className="flex-row gap-3 mb-3">
+            <View className="flex-1">
+              <Text className="text-xs text-muted mb-1 uppercase">Saída de Casa</Text>
+              <TextInput className="bg-background border border-border rounded-xl px-4 py-3 text-foreground"
+                placeholder="08:00" placeholderTextColor={colors.muted}
+                value={startTime} onChangeText={setStartTime} returnKeyType="done" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-xs text-muted mb-1 uppercase">Chegada em Casa</Text>
+              <TextInput className="bg-background border border-border rounded-xl px-4 py-3 text-foreground"
+                placeholder="15:00" placeholderTextColor={colors.muted}
+                value={endTime} onChangeText={setEndTime} returnKeyType="done" />
+            </View>
+          </View>
+          {startTime && endTime && calcDuration(startTime, endTime) > 0 && (
+            <View className="bg-background border border-border rounded-xl p-3 mb-3">
+              <Text className="text-xs text-muted">
+                Duração: {(calcDuration(startTime, endTime) / 60).toFixed(1)}h ({calcDuration(startTime, endTime)} min)
+              </Text>
+            </View>
+          )}
+          <TouchableOpacity onPress={handleSave}
+            style={{ backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center" }}>
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Salvar Turno</Text>
+          </TouchableOpacity>
+        </Card>
+
+        {/* Histórico agrupado por dia */}
+        {shiftsByDay.length > 0 && (
+          <>
+            <Text className="text-sm font-semibold text-muted mb-2 uppercase">Histórico</Text>
+            {shiftsByDay.map(([day, shifts]) => {
+              const dayMinutes = shifts.reduce((s, sh) => s + sh.durationMinutes, 0);
+              const dayHours = dayMinutes / 60;
+              const dayEarnings = earnings
+                .filter((e) => e.date === day)
+                .reduce((s, e) => s + e.value, 0);
+              const dayReaisPerHora = dayHours > 0 ? dayEarnings / dayHours : 0;
+
+              return (
+                <View key={day} className="bg-surface border border-border rounded-xl p-3 mb-3">
+                  <View className="flex-row justify-between items-center mb-2">
+                    <Text className="text-sm font-bold text-foreground">{formatDate(day)}</Text>
+                    <View className="items-end">
+                      <Text className="text-xs font-bold" style={{ color: colors.primary }}>{dayHours.toFixed(1)}h total</Text>
+                      {dayReaisPerHora > 0 && (
+                        <Text className="text-xs text-muted">{formatCurrency(dayReaisPerHora)}/hora</Text>
+                      )}
+                    </View>
+                  </View>
+                  {shifts.map((s) => (
+                    <View key={s.id} className="flex-row items-center py-1.5 border-t border-border/50">
+                      <IconSymbol name="clock.fill" size={12} color={colors.muted} />
+                      <Text className="text-xs text-foreground ml-2 flex-1">
+                        {s.startTime} → {s.endTime} ({(s.durationMinutes / 60).toFixed(1)}h)
+                      </Text>
+                      <TouchableOpacity onPress={() => removeWorkShift(s.id)} style={{ padding: 4 }}>
+                        <IconSymbol name="trash.fill" size={13} color={colors.error} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              );
+            })}
+          </>
+        )}
+        {shiftsByDay.length === 0 && (
+          <Text className="text-sm text-muted text-center py-4">Nenhum turno registrado no período</Text>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
 // ==================== CONFIG ====================
 function ConfigTab() {
   const { config, saveConfig, exportData, importData } = useData();
   const colors = useColors();
   const [costPerKm, setCostPerKm] = useState(config.costPerKm.toString());
   const [workDays, setWorkDays] = useState(config.workDaysPerWeek.toString());
+  const [currentMotoKm, setCurrentMotoKm] = useState((config.currentMotoKm || 0).toString());
+  const [weeklyGoalMode, setWeeklyGoalMode] = useState<"current" | "next">(config.weeklyGoalMode || "next");
   const [newApp, setNewApp] = useState("");
   const [paymentConfigs, setPaymentConfigs] = useState(config.appPaymentConfigs || []);
   const [workshops, setWorkshops] = useState(config.workshops || []);
@@ -1196,6 +1332,8 @@ function ConfigTab() {
     await saveConfig({
       costPerKm: parseFloat(costPerKm.replace(",", ".")) || 0.35,
       workDaysPerWeek: parseInt(workDays) || 5,
+      currentMotoKm: parseFloat(currentMotoKm.replace(",", ".")) || 0,
+      weeklyGoalMode,
       appPaymentConfigs: paymentConfigs,
       workshops: workshops,
       maintenanceCategories: config.maintenanceCategories || config.maintenanceItems,
@@ -1232,14 +1370,12 @@ function ConfigTab() {
 
   const handleAddApp = async () => {
     if (!newApp.trim()) return;
-    const apps = [...config.apps, newApp.trim()];
-    await saveConfig({ apps });
+    await saveConfig({ apps: [...config.apps, newApp.trim()] });
     setNewApp("");
   };
 
   const handleRemoveApp = async (app: string) => {
-    const apps = config.apps.filter((a) => a !== app);
-    await saveConfig({ apps });
+    await saveConfig({ apps: config.apps.filter((a) => a !== app) });
   };
 
   const handleAddWorkshop = () => {
@@ -1247,20 +1383,12 @@ function ConfigTab() {
       if (Platform.OS === "web") alert("Preencha o nome do local"); else Alert.alert("Atenção", "Preencha o nome do local");
       return;
     }
-    const newWs = {
-      id: `ws_${Date.now()}`,
-      name: newWorkshopName.trim(),
-      address: newWorkshopAddress.trim() || undefined,
-      phone: newWorkshopPhone.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
+    const newWs = { id: `ws_${Date.now()}`, name: newWorkshopName.trim(), address: newWorkshopAddress.trim() || undefined, phone: newWorkshopPhone.trim() || undefined, createdAt: new Date().toISOString() };
     setWorkshops([...workshops, newWs]);
     setNewWorkshopName(""); setNewWorkshopAddress(""); setNewWorkshopPhone("");
   };
 
-  const handleRemoveWorkshop = (id: string) => {
-    setWorkshops(workshops.filter((w) => w.id !== id));
-  };
+  const handleRemoveWorkshop = (id: string) => { setWorkshops(workshops.filter((w) => w.id !== id)); };
 
   const handleExport = async () => {
     try {
@@ -1285,8 +1413,7 @@ function ConfigTab() {
   const handleImport = async () => {
     if (Platform.OS === "web") {
       const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".json";
+      input.type = "file"; input.accept = ".json";
       input.onchange = async (e: any) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -1332,7 +1459,35 @@ function ConfigTab() {
                 keyboardType="number-pad" value={workDays} onChangeText={setWorkDays} returnKeyType="done" />
             </View>
           </View>
-          <Text className="text-xs text-muted">O valor do Custo/KM será usado em todos os cálculos.</Text>
+
+          {/* KM Atual da Moto */}
+          <Text className="text-xs text-muted mb-1 uppercase">KM Atual da Moto (Odômetro)</Text>
+          <TextInput className="bg-background border border-border rounded-xl px-3 py-2 text-foreground mb-3"
+            placeholder="Ex: 25000" placeholderTextColor={colors.muted} keyboardType="decimal-pad"
+            value={currentMotoKm} onChangeText={setCurrentMotoKm} returnKeyType="done" />
+          <Text className="text-xs text-muted mb-3">Usado para alertas automáticos de manutenção baseados em KM.</Text>
+
+          {/* Meta Semanal */}
+          <Text className="text-xs text-muted mb-2 uppercase">Cálculo da Meta Semanal</Text>
+          <View className="flex-row gap-2 mb-3">
+            {(["current", "next"] as const).map((mode) => (
+              <TouchableOpacity key={mode} onPress={() => setWeeklyGoalMode(mode)}
+                style={{
+                  flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: "center",
+                  backgroundColor: weeklyGoalMode === mode ? colors.primary : colors.surface,
+                  borderWidth: 1, borderColor: weeklyGoalMode === mode ? colors.primary : colors.border,
+                }}>
+                <Text style={{ color: weeklyGoalMode === mode ? "#fff" : colors.foreground, fontWeight: "600", fontSize: 12 }}>
+                  {mode === "current" ? "Semana Atual" : "Próxima Semana"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text className="text-xs text-muted">
+            {weeklyGoalMode === "current"
+              ? "A meta mostra quanto você precisa fazer esta semana para pagar as contas desta semana."
+              : "A meta mostra quanto você precisa fazer esta semana para pagar as contas da próxima semana."}
+          </Text>
         </Card>
 
         <Card title="Meus Locais" className="mb-4">
@@ -1407,10 +1562,7 @@ function ConfigTab() {
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxWidth: 200 }}>
                   {colorOptions.map((c: string) => (
                     <TouchableOpacity key={c} onPress={() => handleSetAppColor(app, c)}
-                      style={{
-                        width: 24, height: 24, borderRadius: 12, backgroundColor: c, marginRight: 4,
-                        borderWidth: currentColor === c ? 2 : 0, borderColor: "#fff",
-                      }} />
+                      style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: c, marginRight: 4, borderWidth: currentColor === c ? 2 : 0, borderColor: "#fff" }} />
                   ))}
                 </ScrollView>
               </View>
