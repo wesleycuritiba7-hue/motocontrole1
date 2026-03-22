@@ -4,11 +4,13 @@ import {
   FinancialDB, MonthlyBillsDB, InvestmentDB, ExtraIncomeDB,
   WalletTransactionDB, WeeklyKmCostDB,
   RoloProductDB, RoloSaleDB, RoloWithdrawalDB,
+  WorkShiftDB,
   ConfigDB, BackupDB, DEFAULT_CONFIG,
   type MotoEarning, type DailyKm, type Maintenance, type MaintenanceForecast,
   type FinancialEntry, type MonthlyBill, type Investment, type ExtraIncome,
   type AppConfig, type WalletTransaction, type WeeklyKmCost,
   type RoloProduct, type RoloSale, type RoloWithdrawal,
+  type WorkShift,
 } from "./database";
 
 interface DataContextType {
@@ -25,6 +27,7 @@ interface DataContextType {
   roloProducts: RoloProduct[];
   roloSales: RoloSale[];
   roloWithdrawals: RoloWithdrawal[];
+  workShifts: WorkShift[];
   config: AppConfig;
   loading: boolean;
 
@@ -81,6 +84,10 @@ interface DataContextType {
   addRoloWithdrawal: (w: Omit<RoloWithdrawal, "id" | "createdAt">) => Promise<void>;
   removeRoloWithdrawal: (id: string) => Promise<void>;
 
+  addWorkShift: (s: Omit<WorkShift, "id" | "createdAt">) => Promise<void>;
+  updateWorkShift: (id: string, data: Partial<WorkShift>) => Promise<void>;
+  removeWorkShift: (id: string) => Promise<void>;
+
   saveConfig: (c: Partial<AppConfig>) => Promise<void>;
   exportData: () => Promise<string>;
   importData: (jsonStr: string) => Promise<boolean>;
@@ -103,27 +110,28 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [roloProducts, setRoloProducts] = useState<RoloProduct[]>([]);
   const [roloSales, setRoloSales] = useState<RoloSale[]>([]);
   const [roloWithdrawals, setRoloWithdrawals] = useState<RoloWithdrawal[]>([]);
+  const [workShifts, setWorkShifts] = useState<WorkShift[]>([]);
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [e, dk, m, f, fi, mb, inv, ei, wt, wk, rp, rs, rw, c] = await Promise.all([
+    const [e, dk, m, f, fi, mb, inv, ei, wt, wk, rp, rs, rw, ws, c] = await Promise.all([
       MotoEarningsDB.getAll(), DailyKmDB.getAll(), MaintenanceDB.getAll(),
       MaintenanceForecastDB.getAll(), FinancialDB.getAll(), MonthlyBillsDB.getAll(),
       InvestmentDB.getAll(), ExtraIncomeDB.getAll(), WalletTransactionDB.getAll(),
       WeeklyKmCostDB.getAll(), RoloProductDB.getAll(), RoloSaleDB.getAll(),
-      RoloWithdrawalDB.getAll(), ConfigDB.get(),
+      RoloWithdrawalDB.getAll(), WorkShiftDB.getAll(), ConfigDB.get(),
     ]);
     setEarnings(e); setDailyKms(dk); setMaintenance(m); setForecasts(f);
     setFinancials(fi); setMonthlyBills(mb); setInvestments(inv); setExtraIncomes(ei);
     setWalletTransactions(wt); setWeeklyKmCosts(wk);
     setRoloProducts(rp); setRoloSales(rs); setRoloWithdrawals(rw);
+    setWorkShifts(ws);
     setConfig(c); setLoading(false);
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Auto-replicação de contas fixas
   const autoReplicateRan = useRef(false);
   useEffect(() => {
     if (loading || autoReplicateRan.current) return;
@@ -133,21 +141,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const now = new Date();
       let changed = false;
 
-      // Fixas Mensais: replicar para os próximos 12 meses
       const fixedMonthly = allFinancials.filter((f) => f.isFixed && f.fixedPeriod === "monthly");
       const monthlyTemplates: Record<string, typeof fixedMonthly[0]> = {};
       fixedMonthly.forEach((f) => {
         const key = f.description;
-        if (!monthlyTemplates[key]) {
-          monthlyTemplates[key] = f;
-        }
+        if (!monthlyTemplates[key]) monthlyTemplates[key] = f;
       });
 
       for (const bill of Object.values(monthlyTemplates)) {
         const dueDateStr = bill.dueDate || bill.date;
         const parts = dueDateStr.split("-");
         const originalDay = parseInt(parts[2], 10);
-
         for (let offset = 0; offset <= 11; offset++) {
           const totalMonths = now.getMonth() + offset;
           const targetYear = now.getFullYear() + Math.floor(totalMonths / 12);
@@ -155,31 +159,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const maxDay = new Date(targetYear, targetMonth + 1, 0).getDate();
           const day = Math.min(originalDay, maxDay);
           const targetDueStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
           const exists = allFinancials.some((f) => {
             const fDate = f.dueDate || f.date;
             const fParts = fDate.split("-");
             return (
               f.description === bill.description &&
-              f.isFixed &&
-              f.fixedPeriod === "monthly" &&
+              f.isFixed && f.fixedPeriod === "monthly" &&
               parseInt(fParts[0]) === targetYear &&
               parseInt(fParts[1]) - 1 === targetMonth
             );
           });
-
           if (!exists) {
             const newItem = await FinancialDB.add({
-              type: bill.type,
-              description: bill.description,
-              value: bill.value,
-              category: bill.category,
-              date: targetDueStr,
-              dueDate: targetDueStr,
-              isPaid: false,
-              isFixed: true,
-              fixedPeriod: "monthly",
-              isInstallment: false,
+              type: bill.type, description: bill.description, value: bill.value,
+              category: bill.category, date: targetDueStr, dueDate: targetDueStr,
+              isPaid: false, isFixed: true, fixedPeriod: "monthly", isInstallment: false,
             });
             allFinancials.push(newItem);
             changed = true;
@@ -187,18 +181,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Fixas Semanais: replicar para as próximas 52 semanas
       const fixedWeekly = allFinancials.filter((f) => f.isFixed && f.fixedPeriod === "weekly");
       const weeklyTemplates: Record<string, typeof fixedWeekly[0]> = {};
-      fixedWeekly.forEach((f) => {
-        if (!weeklyTemplates[f.description]) weeklyTemplates[f.description] = f;
-      });
+      fixedWeekly.forEach((f) => { if (!weeklyTemplates[f.description]) weeklyTemplates[f.description] = f; });
 
       for (const bill of Object.values(weeklyTemplates)) {
         const dueDateStr = bill.dueDate || bill.date;
         const billDue = new Date(dueDateStr + "T12:00:00");
         const dayOfWeek = billDue.getDay();
-
         for (let weekOffset = 0; weekOffset <= 51; weekOffset++) {
           const refDate = new Date(now);
           refDate.setDate(refDate.getDate() + weekOffset * 7);
@@ -207,26 +197,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const targetDate = new Date(refDate);
           targetDate.setDate(targetDate.getDate() + diff);
           const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
-
           const exists = allFinancials.some((f) =>
-            f.description === bill.description &&
-            f.isFixed &&
-            f.fixedPeriod === "weekly" &&
+            f.description === bill.description && f.isFixed && f.fixedPeriod === "weekly" &&
             (f.dueDate || f.date) === targetStr
           );
-
           if (!exists && targetDate >= billDue) {
             const newItem = await FinancialDB.add({
-              type: bill.type,
-              description: bill.description,
-              value: bill.value,
-              category: bill.category,
-              date: targetStr,
-              dueDate: targetStr,
-              isPaid: false,
-              isFixed: true,
-              fixedPeriod: "weekly",
-              isInstallment: false,
+              type: bill.type, description: bill.description, value: bill.value,
+              category: bill.category, date: targetStr, dueDate: targetStr,
+              isPaid: false, isFixed: true, fixedPeriod: "weekly", isInstallment: false,
             });
             allFinancials.push(newItem);
             changed = true;
@@ -245,12 +224,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const appConfig = paymentConfigs.find((p) => p.appName === e.appName);
     if (appConfig && appConfig.paymentMode === "instant") {
       const today = new Date().toISOString().split("T")[0];
-      await MotoEarningsDB.add({
-        ...e,
-        status: "received",
-        receivedValue: e.value,
-        receivedDate: today,
-      });
+      await MotoEarningsDB.add({ ...e, status: "received", receivedValue: e.value, receivedDate: today });
     } else {
       await MotoEarningsDB.add(e);
     }
@@ -277,7 +251,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // Maintenance
   const addMaintenance = useCallback(async (m: Omit<Maintenance, "id" | "createdAt">) => {
-    const newItem = await MaintenanceDB.add(m);
+    await MaintenanceDB.add(m);
     await FinancialDB.add({
       type: "expense", category: "Manutenção Moto",
       description: `Manutenção: ${m.item}${m.location ? ` - ${m.location}` : ""}`,
@@ -287,11 +261,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const motoWallet = (currentConfig.wallets || []).find((w: any) => w.name === "Moto" || w.id === "wallet_moto");
     if (motoWallet) {
       await WalletTransactionDB.add({
-        walletId: motoWallet.id,
-        type: "withdrawal",
-        value: m.value,
-        description: `Manutenção: ${m.item}`,
-        date: m.date,
+        walletId: motoWallet.id, type: "withdrawal", value: m.value,
+        description: `Manutenção: ${m.item}`, date: m.date,
       });
     }
     await refresh();
@@ -308,16 +279,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (maintItem) {
       const allFinancials = await FinancialDB.getAll();
       const matchingFinancial = allFinancials.find((f) =>
-        f.category === "Manutenção Moto" &&
-        f.description.includes(maintItem.item) &&
-        Math.abs(f.value - maintItem.value) < 0.01 &&
-        f.date === maintItem.date
+        f.category === "Manutenção Moto" && f.description.includes(maintItem.item) &&
+        Math.abs(f.value - maintItem.value) < 0.01 && f.date === maintItem.date
       );
       if (matchingFinancial) await FinancialDB.remove(matchingFinancial.id);
       const allWalletTx = await WalletTransactionDB.getAll();
       const matchingWalletTx = allWalletTx.find((t) =>
-        t.type === "withdrawal" &&
-        t.description.includes(maintItem.item) &&
+        t.type === "withdrawal" && t.description.includes(maintItem.item) &&
         Math.abs(t.value - maintItem.value) < 0.01
       );
       if (matchingWalletTx) await WalletTransactionDB.remove(matchingWalletTx.id);
@@ -339,13 +307,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // Financial
   const addFinancial = useCallback(async (f: Omit<FinancialEntry, "id" | "createdAt">) => {
     await FinancialDB.add(f);
-    // Se for conta fixa, resetar para replicar automaticamente
-    if (f.isFixed) {
-      autoReplicateRan.current = false;
-    }
+    if (f.isFixed) autoReplicateRan.current = false;
     await refresh();
   }, [refresh]);
-
   const updateFinancial = useCallback(async (id: string, data: Partial<FinancialEntry>) => {
     await FinancialDB.update(id, data); await refresh();
   }, [refresh]);
@@ -438,6 +402,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     await RoloWithdrawalDB.remove(id); await refresh();
   }, [refresh]);
 
+  // Work Shifts
+  const addWorkShift = useCallback(async (s: Omit<WorkShift, "id" | "createdAt">) => {
+    await WorkShiftDB.add(s); await refresh();
+  }, [refresh]);
+  const updateWorkShift = useCallback(async (id: string, data: Partial<WorkShift>) => {
+    await WorkShiftDB.update(id, data); await refresh();
+  }, [refresh]);
+  const removeWorkShift = useCallback(async (id: string) => {
+    await WorkShiftDB.remove(id); await refresh();
+  }, [refresh]);
+
   // Config
   const saveConfig = useCallback(async (c: Partial<AppConfig>) => {
     await ConfigDB.save(c); await refresh();
@@ -458,7 +433,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     <DataContext.Provider value={{
       earnings, dailyKms, maintenance, forecasts, financials, monthlyBills,
       investments, extraIncomes, walletTransactions, weeklyKmCosts,
-      roloProducts, roloSales, roloWithdrawals,
+      roloProducts, roloSales, roloWithdrawals, workShifts,
       config, loading,
       refresh,
       addEarning, updateEarning, removeEarning,
@@ -475,6 +450,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       addRoloProduct, updateRoloProduct, removeRoloProduct,
       addRoloSale, removeRoloSale,
       addRoloWithdrawal, removeRoloWithdrawal,
+      addWorkShift, updateWorkShift, removeWorkShift,
       saveConfig, exportData, importData, clearAllData,
     }}>
       {children}
