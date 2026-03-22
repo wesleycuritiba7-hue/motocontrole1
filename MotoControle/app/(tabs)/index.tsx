@@ -7,8 +7,8 @@ import { useData } from "@/lib/data-context";
 import { useColors } from "@/hooks/use-colors";
 import {
   calcTotalEarnings, calcTotalEarningsReceived, calcTotalEarningsPending,
-  calcTotalKm, calcTotalExpenses, calcWeeklyGoal, calcTotalExtraIncome,
-  calcMaintenanceCost, getCategorySpending, // getCategorySpending still used for limit alerts
+  calcTotalKm, calcTotalExtraIncome,
+  getCategorySpending,
   getStartOfWeek, getEndOfWeek, getStartOfMonth, getEndOfMonth,
   getMonthlyDailyData, getWeekBills,
   formatCurrency, formatDate, formatWeekRange, formatMonthRange,
@@ -16,11 +16,12 @@ import {
 } from "@/lib/calculations";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.9.0";
 
 export default function DashboardScreen() {
   const {
-    earnings, dailyKms, maintenance, financials, extraIncomes, weeklyKmCosts, config, loading,
+    earnings, dailyKms, maintenance, financials, extraIncomes, forecasts,
+    weeklyKmCosts, config, loading,
     exportData, importData, clearAllData,
   } = useData();
   const colors = useColors();
@@ -47,28 +48,21 @@ export default function DashboardScreen() {
   const monthlyEarnings = calcTotalEarnings(earnings, monthStart, monthEnd);
   const totalKm = calcTotalKm(dailyKms, monthStart, monthEnd);
 
-  // AJUSTE 3: Usar somente ganhos RECEBIDOS para o saldo (na data de pagamento)
   const monthlyEarningsReceived = calcTotalEarningsReceived(earnings, monthStart, monthEnd);
   const monthlyPending = calcTotalEarningsPending(earnings, monthStart, monthEnd);
 
-  // AJUSTE 3: Gastos KM - somente os que estão com isPaid=true
   const paidExpenses = financials
     .filter((e) => e.type === "expense" && e.isPaid && isInRange(e.date, monthStart, monthEnd))
     .reduce((s, e) => s + e.value, 0);
-  // AJUSTE 3: Corrigir bug - somar receitas lançadas no financeiro (income) ao saldo
   const financialIncome = financials
     .filter((e) => e.type === "income" && e.isPaid && isInRange(e.date, monthStart, monthEnd))
     .reduce((s, e) => s + e.value, 0);
-  // Saldo usa apenas ganhos recebidos e gastos pagos
   const totalMonthlyExpenses = paidExpenses;
 
   const extraTotal = calcTotalExtraIncome(extraIncomes, monthStart, monthEnd);
-  // AJUSTE 3: Saldo = ganhos recebidos + renda extra - gastos pagos
-  // AJUSTE 1.2 + 3: Saldo = saldo inicial + ganhos recebidos + renda extra + receitas financeiro - gastos pagos
   const initialBalance = config.initialBalance || 0;
   const totalBalance = initialBalance + monthlyEarningsReceived + extraTotal + financialIncome - totalMonthlyExpenses;
 
-  // AJUSTE 1: Contas a Vencer do Mês (não pagas, vencimento no mês corrente)
   const monthBillsUnpaid = financials.filter((e) => {
     if (e.type !== "expense" || e.isPaid) return false;
     const due = new Date(e.dueDate || e.date);
@@ -76,38 +70,44 @@ export default function DashboardScreen() {
   });
   const totalMonthBillsUnpaid = monthBillsUnpaid.reduce((s, e) => s + e.value, 0);
 
-  // AJUSTE 1: Meta semanal baseada na PRÓXIMA semana
   const workDays = config.workDaysPerWeek || 5;
+  const weeklyGoalMode = config.weeklyGoalMode || "next";
 
-  // AJUSTE 6.1: Contas da próxima semana - TODAS (pagas + não pagas) para meta fixa
-  const nextWeekStart = new Date(weekEnd.getTime() + 86400000);
-  const nextWeekBillsAll = getWeekBills(financials, nextWeekStart);
-  const totalNextWeekBills = nextWeekBillsAll.reduce((s, e) => s + e.value, 0);
-  const nextWeekBillsPaid = nextWeekBillsAll.filter((e) => e.isPaid).reduce((s, e) => s + e.value, 0);
-  const nextWeekBills = nextWeekBillsAll;
+  // Semana de referência para meta (atual ou próxima)
+  const goalWeekStart = weeklyGoalMode === "current" ? weekStart : new Date(weekEnd.getTime() + 86400000);
+  const goalWeekBillsAll = getWeekBills(financials, goalWeekStart);
+  const totalGoalWeekBills = goalWeekBillsAll.reduce((s, e) => s + e.value, 0);
+  const goalWeekBillsPaid = goalWeekBillsAll.filter((e) => e.isPaid).reduce((s, e) => s + e.value, 0);
 
-  // AJUSTE 2 v6: Nova lógica de Meta Semanal baseada em KM Rodado Diário
-  // O custo de KM rodado na semana atual é incrementado automaticamente à meta da próxima semana
   const currentWeekKms = dailyKms.filter((e) => isInRange(e.date, weekStart, weekEnd));
   const currentWeekTotalKm = currentWeekKms.reduce((s, e) => s + e.km, 0);
   const currentWeekKmCost = currentWeekTotalKm * config.costPerKm;
 
-  // AJUSTE 7.1: Meta semanal: contas da próxima semana + custo KM + reserva de emergência (se habilitada)
   const reservePct = config.investmentPercentage || 0;
   const reserveInGoal = config.reserveInWeeklyGoal || false;
-  const weeklyEarningsForReserve = weeklyEarnings;
-  const reserveAmount = reserveInGoal ? (weeklyEarningsForReserve * reservePct / 100) : 0;
-  const weeklyGoalTotal = totalNextWeekBills + currentWeekKmCost + reserveAmount;
+  const reserveAmount = reserveInGoal ? (weeklyEarnings * reservePct / 100) : 0;
+  const weeklyGoalTotal = totalGoalWeekBills + currentWeekKmCost + reserveAmount;
   const dailyGoal = workDays > 0 ? weeklyGoalTotal / workDays : 0;
 
-  // AJUSTE 6.1: Progresso = faturamento da semana + contas já pagas da próxima semana
-  const weeklyProgress = weeklyEarnings + nextWeekBillsPaid;
+  const weeklyProgress = weeklyEarnings + goalWeekBillsPaid;
   const weeklyRemaining = Math.max(0, weeklyGoalTotal - weeklyProgress);
-  const daysRemaining = Math.max(1, workDays - Math.min(workDays, new Date().getDay() === 0 ? workDays : new Date().getDay()));
+  const daysRemaining = Math.max(1, workDays - Math.min(workDays, now.getDay() === 0 ? workDays : now.getDay()));
   const dailyRemainingGoal = daysRemaining > 0 ? weeklyRemaining / daysRemaining : 0;
+  const avgDiaGoalWeek = workDays > 0 ? weeklyGoalTotal / workDays : 0;
 
-  // AJUSTE 8.3: Média Dia projetada para a semana seguinte (inclui KM e reserva quando habilitada)
-  const avgDiaNextWeek = workDays > 0 ? weeklyGoalTotal / workDays : 0;
+  // Alertas de manutenção por KM
+  const currentMotoKm = config.currentMotoKm || 0;
+  const kmAlerts = forecasts.filter((f) => {
+    if (!f.kmDuration || f.kmDuration <= 0) return false;
+    // Busca última manutenção deste item
+    const lastMaint = [...maintenance]
+      .filter((m) => m.item === f.item)
+      .sort((a, b) => b.km - a.km)[0];
+    const lastKm = lastMaint ? lastMaint.km : 0;
+    const nextKm = lastKm + f.kmDuration;
+    const kmToNext = nextKm - currentMotoKm;
+    return kmToNext <= f.kmDuration * 0.15 || kmToNext <= 0; // alerta nos últimos 15% ou vencido
+  });
 
   // Contas da semana navegável
   const weekBillsRef = getWeekBills(financials, weekRef);
@@ -118,7 +118,7 @@ export default function DashboardScreen() {
   // Gráfico mensal
   const monthlyData = getMonthlyDailyData(earnings, extraIncomes, financials, monthRef);
 
-  // Alertas de limite
+  // Alertas de limite de gastos
   const limits = config.spendingLimits || [];
   const overLimits = limits.filter((lim) => {
     const spent = getCategorySpending(financials, lim.category, lim.period);
@@ -172,10 +172,14 @@ export default function DashboardScreen() {
     }
   };
 
+  const goalLabel = weeklyGoalMode === "current" ? "Meta Semanal (Esta Semana)" : "Meta Semanal (Próxima Semana)";
+  const avgLabel = weeklyGoalMode === "current" ? "Média Dia (Esta Semana)" : "Média Dia (Próxima Semana)";
+
   return (
     <ScreenContainer>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Header com versão */}
+
+        {/* Header */}
         <View className="px-5 pt-4 pb-3">
           <View className="flex-row items-center justify-between">
             <View>
@@ -191,7 +195,7 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Backup/Restauração */}
+        {/* Backup */}
         {showBackup && (
           <View className="mx-5 mb-4 bg-surface border border-border rounded-2xl p-4">
             <Text className="text-sm font-bold text-foreground mb-3">Backup & Restauração</Text>
@@ -224,7 +228,7 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* Alertas de limite */}
+        {/* Alertas de limite de gastos */}
         {overLimits.length > 0 && (
           <View className="mx-5 mb-4 bg-yellow-500/10 border-2 border-yellow-500 rounded-2xl p-4">
             <View className="flex-row items-center mb-2">
@@ -244,34 +248,59 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* AJUSTE 1: Meta Semanal - projetada para a PRÓXIMA semana */}
-        <View className="mx-5 mb-4 bg-surface border-2 rounded-2xl p-4" style={{ borderColor: weeklyRemaining > 0 ? colors.warning : colors.success }}>
+        {/* Alertas de manutenção por KM */}
+        {kmAlerts.length > 0 && (
+          <View className="mx-5 mb-4 bg-red-500/10 border-2 border-red-500 rounded-2xl p-4">
+            <View className="flex-row items-center mb-2">
+              <IconSymbol name="wrench.fill" size={18} color={colors.error} />
+              <Text className="text-sm font-bold ml-2" style={{ color: colors.error }}>Manutenção Necessária</Text>
+            </View>
+            {kmAlerts.map((f, i) => {
+              const lastMaint = [...maintenance]
+                .filter((m) => m.item === f.item)
+                .sort((a, b) => b.km - a.km)[0];
+              const lastKm = lastMaint ? lastMaint.km : 0;
+              const nextKm = lastKm + f.kmDuration;
+              const kmToNext = nextKm - currentMotoKm;
+              return (
+                <Text key={i} className="text-xs text-foreground ml-6 mb-1">
+                  • {f.item}: {kmToNext <= 0
+                    ? `Vencido! (${Math.abs(kmToNext).toFixed(0)} km atrasado)`
+                    : `Faltam ${kmToNext.toFixed(0)} km`}
+                  {" "}(próx. troca: {nextKm.toFixed(0)} km)
+                </Text>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Meta Semanal */}
+        <View className="mx-5 mb-4 bg-surface border-2 rounded-2xl p-4"
+          style={{ borderColor: weeklyRemaining > 0 ? colors.warning : colors.success }}>
           <View className="flex-row items-center mb-2">
             <IconSymbol name="target" size={20} color={weeklyRemaining > 0 ? colors.warning : colors.success} />
-            <Text className="text-base font-bold text-foreground ml-2">Meta Semanal (Próxima Semana)</Text>
+            <Text className="text-base font-bold text-foreground ml-2">{goalLabel}</Text>
           </View>
 
           {weeklyGoalTotal > 0 ? (
             <>
               <Text className="text-xs text-muted mb-1">
-                Contas da próxima semana: {formatCurrency(totalNextWeekBills)}
+                Contas da semana: {formatCurrency(totalGoalWeekBills)}
               </Text>
               {reserveAmount > 0 && (
                 <Text className="text-xs text-muted mb-1">
-                  Reserva de Emergência ({reservePct}%): {formatCurrency(reserveAmount)}
+                  Reserva ({reservePct}%): {formatCurrency(reserveAmount)}
                 </Text>
               )}
               {currentWeekKmCost > 0 && (
                 <Text className="text-xs text-muted mb-1">
-                  Custo KM acumulado ({currentWeekTotalKm.toFixed(0)} km × {formatCurrency(config.costPerKm)}/km):
-                  {" "}{formatCurrency(currentWeekKmCost)}
+                  Custo KM ({currentWeekTotalKm.toFixed(0)} km × {formatCurrency(config.costPerKm)}/km): {formatCurrency(currentWeekKmCost)}
                 </Text>
               )}
               <Text className="text-xs text-muted mb-2">
-                Total a faturar esta semana: {formatCurrency(weeklyGoalTotal)} em {workDays} dias de trabalho
+                Total: {formatCurrency(weeklyGoalTotal)} em {workDays} dias
               </Text>
 
-              {/* Barra de progresso */}
               <View className="bg-background rounded-full h-4 mb-2 overflow-hidden">
                 <View style={{
                   width: `${Math.min(100, (weeklyProgress / weeklyGoalTotal) * 100)}%`,
@@ -293,42 +322,35 @@ export default function DashboardScreen() {
                     Falta {formatCurrency(weeklyRemaining)}
                   </Text>
                   <Text className="text-xs text-muted mt-1">
-                    Precisa fazer ~{formatCurrency(dailyRemainingGoal)}/dia nos próximos {daysRemaining} dia(s)
+                    ~{formatCurrency(dailyRemainingGoal)}/dia nos próximos {daysRemaining} dia(s)
                   </Text>
                 </View>
               ) : (
                 <View className="bg-green-500/10 rounded-xl p-3 mt-1">
-                  <Text className="text-sm font-bold" style={{ color: colors.success }}>
-                    Meta atingida! Parabéns!
-                  </Text>
+                  <Text className="text-sm font-bold" style={{ color: colors.success }}>Meta atingida! Parabéns!</Text>
                 </View>
               )}
             </>
           ) : (
-            <Text className="text-xs text-muted">Nenhuma conta pendente para a próxima semana. Cadastre contas no Financeiro.</Text>
+            <Text className="text-xs text-muted">Nenhuma conta pendente para a semana. Cadastre contas no Financeiro.</Text>
           )}
         </View>
 
-        {/* AJUSTE 1: Média Dia projetada para a próxima semana */}
+        {/* Média Dia */}
         {weeklyGoalTotal > 0 && (
           <View className="mx-5 mb-4 bg-surface border border-warning/30 rounded-2xl p-4">
             <View className="flex-row items-center mb-1">
               <IconSymbol name="exclamationmark.triangle.fill" size={18} color={colors.warning} />
-              <Text className="text-sm font-semibold text-foreground ml-2">Média Dia (Próxima Semana)</Text>
+              <Text className="text-sm font-semibold text-foreground ml-2">{avgLabel}</Text>
             </View>
             <Text className="text-xs text-muted">
-              Contas da próxima semana: {formatCurrency(totalNextWeekBills)}
+              Se trabalhar {workDays} dias, precisa fazer {formatCurrency(avgDiaGoalWeek)} por dia.
             </Text>
-            <Text className="text-xs text-muted">
-              Se trabalhar {workDays} dias, precisa fazer {formatCurrency(avgDiaNextWeek)} por dia.
-            </Text>
-            <Text className="text-lg font-bold text-foreground mt-1">
-              {formatCurrency(avgDiaNextWeek)}/dia
-            </Text>
+            <Text className="text-lg font-bold text-foreground mt-1">{formatCurrency(avgDiaGoalWeek)}/dia</Text>
           </View>
         )}
 
-        {/* AJUSTE 1: Card "Contas a Vencer do Mês" + Stats Grid */}
+        {/* Stats Grid */}
         <View className="px-5 gap-3">
           <View className="flex-row gap-3">
             <StatCard title="Saldo" value={formatCurrency(totalBalance)}
@@ -337,7 +359,6 @@ export default function DashboardScreen() {
               icon={<IconSymbol name="chart.line.uptrend.xyaxis" size={18} color={colors.success} />} />
           </View>
           <View className="flex-row gap-3">
-            {/* AJUSTE 1: Card "Contas a Vencer do Mês" ao lado de Ganhos Semana */}
             <StatCard title="Contas a Vencer" value={formatCurrency(totalMonthBillsUnpaid)}
               icon={<IconSymbol name="exclamationmark.triangle.fill" size={18} color={colors.warning} />} />
             <StatCard title="Ganhos Semana" value={formatCurrency(weeklyEarnings)}
@@ -363,9 +384,7 @@ export default function DashboardScreen() {
 
         {/* Contas da Semana */}
         <View className="mx-5 mt-4 mb-4 bg-surface border border-border rounded-2xl p-4">
-          <Text className="text-sm font-semibold text-muted mb-2 uppercase tracking-wide">
-            Contas da Semana
-          </Text>
+          <Text className="text-sm font-semibold text-muted mb-2 uppercase tracking-wide">Contas da Semana</Text>
           <DateNavigator
             label={formatWeekRange(weekRef)}
             onPrev={() => setWeekRef(shiftWeek(weekRef, -1))}
@@ -375,8 +394,6 @@ export default function DashboardScreen() {
             <Text className="text-xs text-muted">Total da Semana:</Text>
             <Text className="text-sm font-bold" style={{ color: colors.error }}>{formatCurrency(weekBillsTotal)}</Text>
           </View>
-
-          {/* AJUSTE 6: Cards de Contas da Semana - fonte maior, negrito, layout vertical */}
           {weekBillsUnpaid.length > 0 && (
             <>
               <Text className="text-sm font-bold mb-2" style={{ color: colors.warning }}>A Pagar:</Text>
@@ -406,24 +423,24 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        {/* Gráfico Ganhos vs Gastos */}
+        {/* Gráfico Ganhos vs Gastos — sem Total */}
         <View className="mx-5 mt-4 bg-surface rounded-2xl p-4 border border-border">
-          <Text className="text-sm font-semibold text-muted mb-3 uppercase tracking-wide">
-            Ganhos vs Gastos (Mês)
-          </Text>
+          <Text className="text-sm font-semibold text-muted mb-1 uppercase tracking-wide">Ganhos vs Gastos (Mês)</Text>
+          <View className="flex-row justify-between mb-3">
+            <Text className="text-xs" style={{ color: colors.success }}>Entradas: {formatCurrency(monthlyEarnings + extraTotal)}</Text>
+            <Text className="text-xs" style={{ color: colors.error }}>Saídas: {formatCurrency(totalMonthlyExpenses)}</Text>
+          </View>
           <SimpleBarChart
             labels={["Ganhos", "Gastos"]}
             data={[monthlyEarnings + extraTotal, totalMonthlyExpenses]}
             barColors={["#4ADE80", "#F87171"]}
-            height={120} showValues showTotal
+            height={120} showValues
           />
         </View>
 
-        {/* Gráfico de Linhas */}
+        {/* Gráfico Ganhos do Mês — sem Total, com valores nas pontas */}
         <View className="mx-5 mt-4 bg-surface rounded-2xl p-4 border border-border">
-          <Text className="text-sm font-semibold text-muted mb-3 uppercase tracking-wide">
-            Ganhos do Mês
-          </Text>
+          <Text className="text-sm font-semibold text-muted mb-3 uppercase tracking-wide">Ganhos do Mês</Text>
           <DateNavigator
             label={formatMonthRange(monthRef)}
             onPrev={() => setMonthRef(shiftMonth(monthRef, -1))}
@@ -436,9 +453,10 @@ export default function DashboardScreen() {
               { data: monthlyData.extraData, color: "#FBBF24", label: "Renda Extra" },
               { data: monthlyData.gastoData, color: "#F87171", label: "Gastos" },
             ]}
-            height={160} width={340} showTotal
+            height={160} width={340} showValues
           />
         </View>
+
       </ScrollView>
     </ScreenContainer>
   );
