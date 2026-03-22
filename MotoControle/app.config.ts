@@ -1,31 +1,17 @@
 import type { ExpoConfig } from "expo/config";
 
-const bundleId = "space.manus.motocontrole.app.t20260213133819";
-const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
-const schemeFromBundleId = `manus${timestamp}`;
-
-const env = {
-  appName: "MotoControle",
-  appSlug: "motocontrole",
-  logoUrl:
-    "https://files.manuscdn.com/user_upload_by_module/session_file/310519663180751718/rjUaAkkFnOORzLFA.png",
-  scheme: schemeFromBundleId,
-  iosBundleId: bundleId,
-  androidPackage: bundleId,
-};
-
 const config: ExpoConfig = {
-  name: env.appName,
-  slug: env.appSlug,
-  version: "1.7.1",
+  name: "MotoControle",
+  slug: "motocontrole",
+  version: "1.9.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
-  scheme: env.scheme,
+  scheme: "motocontrole",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   ios: {
     supportsTablet: true,
-    bundleIdentifier: env.iosBundleId,
+    bundleIdentifier: "com.motocontrole.app",
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
     },
@@ -38,7 +24,7 @@ const config: ExpoConfig = {
       monochromeImage: "./assets/images/android-icon-monochrome.png",
     },
     edgeToEdgeEnabled: true,
-    package: env.androidPackage,
+    package: "com.motocontrole.app",
     permissions: ["POST_NOTIFICATIONS"],
     intentFilters: [
       {
@@ -46,7 +32,7 @@ const config: ExpoConfig = {
         autoVerify: true,
         data: [
           {
-            scheme: env.scheme,
+            scheme: "motocontrole",
             host: "*",
           },
         ],
@@ -83,13 +69,13 @@ const config: ExpoConfig = {
     ],
   ],
   experiments: {
-  typedRoutes: true,
-},
-extra: {
-  eas: {
-    projectId: "72663945-6a56-42a8-9c79-ec941fefeaa7"
-  }
-},
+    typedRoutes: true,
+  },
+  extra: {
+    eas: {
+      projectId: "72663945-6a56-42a8-9c79-ec941fefeaa7",
+    },
+  },
 };
 
 export default config;
