@@ -17,7 +17,7 @@ type SubTab = "carteiras" | "reserva" | "investimentos";
 
 const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: "carteiras", label: "Carteiras" },
-  { key: "reserva", label: "Reserva de Emergência" },
+  { key: "reserva", label: "Reserva" },
   { key: "investimentos", label: "Investimentos" },
 ];
 
@@ -27,6 +27,7 @@ export default function InvestimentoScreen() {
 
   return (
     <ScreenContainer>
+      {/* Menu padrão pill igual às outras abas */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}>
         {SUB_TABS.map((tab) => (
@@ -59,6 +60,7 @@ function CarteirasTab() {
   const [depositWallet, setDepositWallet] = useState<string | null>(null);
   const [depositValue, setDepositValue] = useState("");
   const [depositDesc, setDepositDesc] = useState("");
+  const [yearRef, setYearRef] = useState(new Date());
 
   const wallets = config.wallets || [];
 
@@ -99,9 +101,7 @@ function CarteirasTab() {
   };
 
   const handleDeleteTransaction = async (txId: string, txDesc: string) => {
-    const doDelete = async () => {
-      await removeWalletTransaction(txId);
-    };
+    const doDelete = async () => { await removeWalletTransaction(txId); };
     if (Platform.OS === "web") {
       if (confirm(`Excluir transação "${txDesc}"?`)) await doDelete();
     } else {
@@ -114,12 +114,8 @@ function CarteirasTab() {
 
   const totalBalance = wallets.reduce((s, w) => s + getWalletBalance(w.id), 0);
 
-  const [yearRef, setYearRef] = useState(new Date());
   const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  const LINE_COLORS = [
-    "#4ADE80", "#60A5FA", "#FBBF24", "#F87171", "#A78BFA",
-    "#34D399", "#FB923C", "#F472B6", "#38BDF8", "#818CF8",
-  ];
+  const LINE_COLORS = ["#4ADE80", "#60A5FA", "#FBBF24", "#F87171", "#A78BFA", "#34D399", "#FB923C"];
 
   const walletMonthlyData = useMemo(() => {
     const year = yearRef.getFullYear();
@@ -150,11 +146,7 @@ function CarteirasTab() {
         monthlyBalances[m] = Math.max(0, runningBalance);
       }
 
-      return {
-        data: monthlyBalances,
-        color: LINE_COLORS[wi % LINE_COLORS.length],
-        label: wallet.name,
-      };
+      return { data: monthlyBalances, color: LINE_COLORS[wi % LINE_COLORS.length], label: wallet.name };
     });
 
     return { labels: monthNames, datasets };
@@ -178,7 +170,7 @@ function CarteirasTab() {
             <SimpleLineChart
               labels={walletMonthlyData.labels}
               datasets={walletMonthlyData.datasets}
-              height={180} width={340} showTotal
+              height={180} width={340} showValues
             />
           </Card>
         )}
@@ -199,7 +191,7 @@ function CarteirasTab() {
                 </Text>
               </View>
               {wallet.yieldRate > 0 && (
-                <Text className="text-xs text-muted mb-2">Rendimento: {wallet.yieldRate}% ao mês (CDI)</Text>
+                <Text className="text-xs text-muted mb-2">Rendimento: {wallet.yieldRate}% ao mês</Text>
               )}
 
               <View className="flex-row gap-2 mb-3">
@@ -235,7 +227,6 @@ function CarteirasTab() {
                 </View>
               )}
 
-              {/* Extrato com botão de excluir */}
               {recentTx.length > 0 && (
                 <>
                   <Text className="text-xs font-semibold text-muted mb-1 uppercase">Extrato</Text>
@@ -247,8 +238,7 @@ function CarteirasTab() {
                         style={{ color: tx.type === "withdrawal" ? colors.error : colors.success }}>
                         {tx.type === "withdrawal" ? "-" : "+"}{formatCurrency(tx.value)}
                       </Text>
-                      <TouchableOpacity onPress={() => handleDeleteTransaction(tx.id, tx.description)}
-                        style={{ padding: 4 }}>
+                      <TouchableOpacity onPress={() => handleDeleteTransaction(tx.id, tx.description)} style={{ padding: 4 }}>
                         <IconSymbol name="trash.fill" size={13} color={colors.error} />
                       </TouchableOpacity>
                     </View>
@@ -297,11 +287,7 @@ function ReservaTab() {
   const reserveAmount = (baseValue * pct) / 100;
 
   const handleSave = async () => {
-    await saveConfig({
-      investmentPercentage: pct,
-      investmentCalcMode: calcMode,
-      investmentMode: investMode,
-    });
+    await saveConfig({ investmentPercentage: pct, investmentCalcMode: calcMode, investmentMode: investMode });
     if (Platform.OS === "web") alert("Configuração salva!"); else Alert.alert("Sucesso", "Configuração salva!");
   };
 
@@ -315,12 +301,8 @@ function ReservaTab() {
             <IconSymbol name="chart.line.uptrend.xyaxis" size={24} color={colors.success} />
             <Text className="text-lg font-bold text-foreground ml-2">Você deve guardar:</Text>
           </View>
-          <Text className="text-3xl font-bold mt-1" style={{ color: colors.success }}>
-            {formatCurrency(reserveAmount)}
-          </Text>
-          <Text className="text-sm text-muted mt-1">
-            {calcMode === "weekly" ? "essa semana" : "esse mês"}
-          </Text>
+          <Text className="text-3xl font-bold mt-1" style={{ color: colors.success }}>{formatCurrency(reserveAmount)}</Text>
+          <Text className="text-sm text-muted mt-1">{calcMode === "weekly" ? "essa semana" : "esse mês"}</Text>
           <View className="mt-3 pt-3 border-t border-border">
             <View className="flex-row justify-between mb-1">
               <Text className="text-xs text-muted">Faturamento {calcMode === "weekly" ? "semanal" : "mensal"}:</Text>
@@ -374,14 +356,11 @@ function ReservaTab() {
           <View className="flex-row items-center justify-between bg-background border border-border rounded-xl px-4 py-3 mb-3">
             <View className="flex-1 mr-3">
               <Text className="text-sm font-semibold text-foreground">Incluir na Meta Semanal</Text>
-              <Text className="text-xs text-muted">Quando ativado, o valor da reserva será adicionado à meta semanal</Text>
+              <Text className="text-xs text-muted">O valor da reserva será adicionado à meta semanal</Text>
             </View>
             <Switch
               value={reserveInGoal}
-              onValueChange={async (val) => {
-                setReserveInGoal(val);
-                await saveConfig({ reserveInWeeklyGoal: val });
-              }}
+              onValueChange={async (val) => { setReserveInGoal(val); await saveConfig({ reserveInWeeklyGoal: val }); }}
               trackColor={{ false: colors.border, true: colors.success }}
               thumbColor={reserveInGoal ? "#fff" : colors.muted}
             />
@@ -462,7 +441,7 @@ function InvestimentosTab() {
           <Card title="Crescimento dos Investimentos" className="mb-4">
             <SimpleBarChart
               labels={Object.keys(monthlyData)} data={Object.values(monthlyData)}
-              height={140} color={colors.primary} showValues showTotal
+              height={140} color={colors.primary} showValues
             />
           </Card>
         )}
